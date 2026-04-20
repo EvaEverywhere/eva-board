@@ -1,0 +1,10 @@
+# Go Backend Conventions
+
+- Keep backend code inside `backend/internal/`.
+- Domain packages should follow `handler.go`, `service.go`, `model.go`.
+- Handlers should stay thin: parse request, call service, return JSON.
+- Use `pgx` with raw SQL. Do not introduce an ORM.
+- Use typed app errors via `internal/apperrors`.
+- Keep route registration centralized in `cmd/server/main.go`.
+- Prefer constructor injection (`NewService`, `NewHandler`) over globals.
+- Keep migration files as numbered SQL pairs in `internal/db/migrations/`.
