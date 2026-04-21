@@ -46,6 +46,14 @@ type AgentRegistry struct {
 	mu       sync.Mutex
 	cache    map[cacheKey]registryEntry
 	building map[cacheKey]*buildCall
+	// gen tracks a per-user "forget version" counter. Forget and
+	// ForgetRepo bump this; For() captures the value at the start of
+	// a build and rejects writing the freshly built manager to the
+	// cache if the captured value is now stale. The just-built
+	// manager is still returned to the in-flight caller so its
+	// request completes — only the cache write is suppressed, so the
+	// next For() rebuilds against the latest settings.
+	gen map[uuid.UUID]uint64
 }
 
 // cacheKey is the (user, repo) pair the registry indexes managers on.
@@ -79,6 +87,7 @@ func NewAgentRegistry(builder ManagerBuilder) *AgentRegistry {
 		builder:  builder,
 		cache:    make(map[cacheKey]registryEntry),
 		building: make(map[cacheKey]*buildCall),
+		gen:      make(map[uuid.UUID]uint64),
 	}
 }
 
@@ -106,6 +115,7 @@ func (r *AgentRegistry) For(ctx context.Context, userID, repoID uuid.UUID) (*Age
 	call := &buildCall{done: make(chan struct{})}
 	r.building[key] = call
 	cached, hadCached := r.cache[key]
+	startGen := r.gen[userID]
 	r.mu.Unlock()
 
 	mgr, sig, err := r.builder(ctx, userID, repoID)
@@ -117,6 +127,20 @@ func (r *AgentRegistry) For(ctx context.Context, userID, repoID uuid.UUID) (*Age
 		close(call.done)
 		r.mu.Unlock()
 		return nil, err
+	}
+
+	// If a Forget / ForgetRepo for this user landed while the
+	// builder was running, the cache snapshot we captured at the
+	// start of this call (and any signature-match decision based on
+	// it) is no longer authoritative. Hand the freshly built manager
+	// back to the in-flight caller so their request still works, but
+	// do NOT cache it — the next For() must rebuild against current
+	// settings. This is the H2 race fix.
+	if r.gen[userID] != startGen {
+		call.mgr = mgr
+		close(call.done)
+		r.mu.Unlock()
+		return mgr, nil
 	}
 
 	var stale *AgentManager
@@ -148,6 +172,7 @@ func (r *AgentRegistry) Forget(userID uuid.UUID) {
 		return
 	}
 	r.mu.Lock()
+	r.gen[userID]++
 	stale := make([]*AgentManager, 0)
 	for k, entry := range r.cache {
 		if k.UserID != userID {
@@ -173,6 +198,7 @@ func (r *AgentRegistry) ForgetRepo(userID, repoID uuid.UUID) {
 	}
 	key := cacheKey{UserID: userID, RepoID: repoID}
 	r.mu.Lock()
+	r.gen[userID]++
 	entry, ok := r.cache[key]
 	if ok {
 		delete(r.cache, key)

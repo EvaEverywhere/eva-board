@@ -234,10 +234,20 @@ func (h *CardsHandler) resolveRepoID(ctx context.Context, c *fiber.Ctx, userID u
 		return uuid.Nil, apperrors.New(http.StatusBadRequest, "repo_id is required")
 	}
 	repo, err := h.repos.GetDefault(ctx, userID)
-	if err != nil {
-		return uuid.Nil, apperrors.New(http.StatusBadRequest, "no default board repo configured for user")
+	if err == nil {
+		return repo.ID, nil
 	}
-	return repo.ID, nil
+	// Distinguish "user has no repos at all" from "user has repos
+	// but no default selected" so the UI can point them at the
+	// right action.
+	if errors.Is(err, ErrRepoNotFound) {
+		existing, listErr := h.repos.List(ctx, userID)
+		if listErr == nil && len(existing) == 0 {
+			return uuid.Nil, apperrors.New(http.StatusBadRequest, "no repositories connected — add one in Settings → Manage repos")
+		}
+		return uuid.Nil, apperrors.New(http.StatusBadRequest, "no default repository selected — pick one in Repos screen, or pass ?repo_id=<id>")
+	}
+	return uuid.Nil, err
 }
 
 func (h *CardsHandler) get(c *fiber.Ctx) error {

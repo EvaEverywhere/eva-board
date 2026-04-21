@@ -21,9 +21,16 @@ type fakeBuilder struct {
 	signature func(uuid.UUID, int) string
 	err       error
 	delay     time.Duration
+	// gate, when non-nil, blocks the builder until the channel is
+	// closed. Used by tests that need to interleave a Forget call
+	// with an in-flight build.
+	gate chan struct{}
 }
 
 func (f *fakeBuilder) build(_ context.Context, userID, repoID uuid.UUID) (*AgentManager, string, error) {
+	if f.gate != nil {
+		<-f.gate
+	}
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -238,6 +245,74 @@ func TestAgentRegistry_Concurrent(t *testing.T) {
 	}
 	if got := fb.count(); got != 1 {
 		t.Fatalf("builder calls = %d, want 1 (singleflight)", got)
+	}
+}
+
+// TestAgentRegistry_ForgetDuringBuild covers the race fixed in H2: a
+// Forget call that lands while a builder is in flight must NOT cache
+// the in-flight build's result. The in-flight caller still gets the
+// just-built manager (so its request works), but the cache is empty
+// afterwards and the next For() invokes the builder again.
+func TestAgentRegistry_ForgetDuringBuild(t *testing.T) {
+	gate := make(chan struct{})
+	fb := &fakeBuilder{gate: gate}
+	r := NewAgentRegistry(fb.build)
+	uid := uuid.New()
+	rid := uuid.New()
+	ctx := context.Background()
+
+	type result struct {
+		mgr *AgentManager
+		err error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		mgr, err := r.For(ctx, uid, rid)
+		resCh <- result{mgr: mgr, err: err}
+	}()
+
+	// Wait for the builder to register the in-flight call so Forget
+	// races against an active build, not a quiescent registry.
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		_, building := r.building[cacheKey{UserID: uid, RepoID: rid}]
+		r.mu.Unlock()
+		if building {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("builder never registered the in-flight call")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	r.Forget(uid)
+	close(gate)
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			t.Fatalf("For: %v", res.err)
+		}
+		if res.mgr == nil {
+			t.Fatal("expected the in-flight caller to receive the just-built manager")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("For() did not return after Forget+gate-release")
+	}
+
+	if got := r.Snapshot(); len(got) != 0 {
+		t.Fatalf("cache must be empty after racing Forget; got %v", got)
+	}
+
+	// Builder must run a second time on the next For() since the
+	// previous build's result was discarded from the cache.
+	if _, err := r.For(ctx, uid, rid); err != nil {
+		t.Fatalf("second For: %v", err)
+	}
+	if got := fb.count(); got != 2 {
+		t.Fatalf("builder calls = %d, want 2 (in-flight build was not cached)", got)
 	}
 }
 

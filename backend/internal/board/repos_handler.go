@@ -124,9 +124,11 @@ func (h *ReposHandler) add(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, mapRepoError(err))
 	}
-	if h.registry != nil {
-		h.registry.Forget(userID)
-	}
+	// No cache eviction on add: the AgentRegistry keys on
+	// (userID, repoID) and the new repo has no cached manager yet.
+	// The default flag is irrelevant to manager construction (only
+	// the curate/cards default-fallback paths read it), so flipping
+	// is_default does not invalidate any existing cache entry either.
 	return c.Status(http.StatusCreated).JSON(repo)
 }
 
@@ -143,7 +145,9 @@ func (h *ReposHandler) remove(c *fiber.Ctx) error {
 		return apperrors.Handle(c, mapRepoError(err))
 	}
 	if h.registry != nil {
-		h.registry.Forget(userID)
+		// Scope the eviction to the removed repo so a delete on
+		// board A doesn't kill in-flight runs on board B.
+		h.registry.ForgetRepo(userID, repoID)
 	}
 	return c.SendStatus(http.StatusNoContent)
 }
@@ -160,9 +164,9 @@ func (h *ReposHandler) setDefault(c *fiber.Ctx) error {
 	if err := h.repos.SetDefault(c.UserContext(), userID, repoID); err != nil {
 		return apperrors.Handle(c, mapRepoError(err))
 	}
-	if h.registry != nil {
-		h.registry.Forget(userID)
-	}
+	// No cache eviction: the default flag does not affect
+	// AgentManager construction. Only the curate/cards default-fallback
+	// paths read is_default and they re-resolve per request.
 	repo, err := h.repos.Get(c.UserContext(), userID, repoID)
 	if err != nil {
 		return apperrors.Handle(c, mapRepoError(err))
