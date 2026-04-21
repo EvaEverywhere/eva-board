@@ -63,10 +63,6 @@ const config: Config = {
     },
     navbar: {
       title: 'EvaBoard',
-      logo: {
-        alt: 'EvaBoard',
-        src: 'img/logo.svg',
-      },
       items: [
         {to: '/', label: 'Docs', position: 'left'},
         {
