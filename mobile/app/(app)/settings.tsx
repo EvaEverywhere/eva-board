@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, View } from "react-native";
+import { router } from "expo-router";
 
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
@@ -8,12 +9,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Separator } from "@/components/ui/Separator";
 import { Text } from "@/components/ui/Text";
+import { useBoardRepos } from "@/hooks/useBoardRepos";
 import { useBoardSettings } from "@/hooks/useBoardSettings";
 import { listRepos, updateBoardSettings } from "@/services/board";
-import type { BoardSettings, Repo } from "@/services/boardTypes";
+import type { BoardSettings } from "@/services/boardTypes";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
-
-const REPO_PATH_ROOT = "~/eva-board-repos";
 
 // AgentPreset describes a one-click coding-agent configuration the user
 // can pick in Settings. `agent` and `command` map directly to the Go
@@ -115,10 +115,6 @@ function detectPreset(settings: {
   return CUSTOM_PRESET_ID;
 }
 
-function defaultRepoPath(owner: string, repo: string): string {
-  return `${REPO_PATH_ROOT}/${owner}-${repo}`;
-}
-
 export default function SettingsScreen() {
   const { user, logout } = useAuthSession();
   const { settings, isLoading, error, refresh } = useBoardSettings();
@@ -142,13 +138,12 @@ export default function SettingsScreen() {
 
         <GitHubCard
           hasToken={Boolean(settings?.has_github_token)}
-          owner={settings?.github_owner ?? ""}
-          repo={settings?.github_repo ?? ""}
-          repoPath={settings?.repo_path ?? ""}
           isLoadingSettings={isLoading}
           settingsError={error}
           onChanged={refresh}
         />
+
+        <ReposSummaryCard hasToken={Boolean(settings?.has_github_token)} />
 
         <AgentCard
           settings={settings}
@@ -193,9 +188,6 @@ function ProfileCard({ user }: { user: { name?: string | null; email?: string | 
 
 type GitHubCardProps = {
   hasToken: boolean;
-  owner: string;
-  repo: string;
-  repoPath: string;
   isLoadingSettings: boolean;
   settingsError: string | null;
   onChanged: () => Promise<void>;
@@ -203,9 +195,6 @@ type GitHubCardProps = {
 
 function GitHubCard({
   hasToken,
-  owner,
-  repo,
-  repoPath,
   isLoadingSettings,
   settingsError,
   onChanged,
@@ -215,36 +204,29 @@ function GitHubCard({
   const [saving, setSaving] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
-  const [repos, setRepos] = useState<Repo[] | null>(null);
-  const [reposLoading, setReposLoading] = useState(false);
-  const [reposError, setReposError] = useState<string | null>(null);
   const [verifiedLogin, setVerifiedLogin] = useState<string | null>(null);
-
-  const [savingRepo, setSavingRepo] = useState(false);
+  const [verifiedFetching, setVerifiedFetching] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
-  const loadRepos = useCallback(async () => {
-    setReposLoading(true);
-    setReposError(null);
+  // Resolve the GitHub username from the token by listing one repo and
+  // reading its owner. Cheap and avoids adding a /user endpoint.
+  const fetchVerifiedLogin = useCallback(async () => {
+    setVerifiedFetching(true);
     try {
       const list = await listRepos();
-      setRepos(list);
-      if (list.length > 0) {
-        setVerifiedLogin(list[0].owner);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load repos";
-      setReposError(message);
+      if (list.length > 0) setVerifiedLogin(list[0].owner);
+    } catch {
+      // Best-effort; the connection itself was already validated on save.
     } finally {
-      setReposLoading(false);
+      setVerifiedFetching(false);
     }
   }, []);
 
   useEffect(() => {
-    if (hasToken && repos === null && !reposLoading) {
-      void loadRepos();
+    if (hasToken && verifiedLogin === null && !verifiedFetching) {
+      void fetchVerifiedLogin();
     }
-  }, [hasToken, repos, reposLoading, loadRepos]);
+  }, [hasToken, verifiedLogin, verifiedFetching, fetchVerifiedLogin]);
 
   const handleVerifyAndSave = async () => {
     const trimmed = token.trim();
@@ -260,30 +242,13 @@ function GitHubCard({
       setShowToken(false);
       await onChanged();
       // Server-side validation hits GitHub /user; if we got here it's valid.
-      // Pull repos so the user can pick one immediately.
-      await loadRepos();
+      // Resolve the username to display the "Connected as @…" line.
+      await fetchVerifiedLogin();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to save token";
       setVerifyError(message);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handlePickRepo = async (picked: Repo) => {
-    setSavingRepo(true);
-    try {
-      await updateBoardSettings({
-        github_owner: picked.owner,
-        github_repo: picked.name,
-        repo_path: defaultRepoPath(picked.owner, picked.name),
-      });
-      await onChanged();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save repo";
-      Alert.alert("Save failed", message);
-    } finally {
-      setSavingRepo(false);
     }
   };
 
@@ -300,7 +265,6 @@ function GitHubCard({
             setDisconnecting(true);
             try {
               await updateBoardSettings({ github_token: "" });
-              setRepos(null);
               setVerifiedLogin(null);
               await onChanged();
             } catch (err) {
@@ -374,68 +338,11 @@ function GitHubCard({
 
             <Separator />
 
-            <View className="gap-2">
-              <Text variant="small" className="text-muted">Repository</Text>
-              {owner && repo ? (
-                <View className="gap-1">
-                  <Text>
-                    {owner}/{repo}
-                  </Text>
-                  <Text variant="small" className="text-muted">
-                    Worktree path: {repoPath || defaultRepoPath(owner, repo)}
-                  </Text>
-                </View>
-              ) : (
-                <Text variant="small" className="text-muted">No repo selected yet.</Text>
-              )}
-            </View>
-
-            <View className="gap-2">
-              <View className="flex-row items-center justify-between">
-                <Text variant="small" className="text-muted">
-                  {owner && repo ? "Switch repository" : "Pick a repository"}
-                </Text>
-                <Pressable onPress={loadRepos} disabled={reposLoading}>
-                  <Text variant="small" className="text-primary">
-                    {reposLoading ? "Loading..." : "Refresh"}
-                  </Text>
-                </Pressable>
-              </View>
-              {reposError ? (
-                <Text variant="small" className="text-destructive">{reposError}</Text>
-              ) : null}
-              {repos && repos.length === 0 ? (
-                <Text variant="small" className="text-muted">
-                  No repositories visible to this token.
-                </Text>
-              ) : null}
-              <View className="gap-1">
-                {(repos ?? []).map((r) => {
-                  const selected = r.owner === owner && r.name === repo;
-                  return (
-                    <Pressable
-                      key={`${r.owner}/${r.name}`}
-                      onPress={() => {
-                        if (!selected && !savingRepo) void handlePickRepo(r);
-                      }}
-                      className={
-                        "flex-row items-center justify-between rounded-lg border px-3 py-2 " +
-                        (selected ? "border-primary bg-primary/10" : "border-border bg-card")
-                      }
-                    >
-                      <View className="flex-1 pr-2">
-                        <Text>
-                          {r.owner}/{r.name}
-                        </Text>
-                        <Text variant="small" className="text-muted">
-                          {r.private ? "private" : "public"} · default {r.default_branch}
-                        </Text>
-                      </View>
-                      {selected ? <Badge variant="default">Selected</Badge> : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
+            <View className="gap-1">
+              <Text variant="small" className="text-muted">Repositories</Text>
+              <Text variant="small">
+                Connect and switch between repos in the Repos screen.
+              </Text>
             </View>
 
             <Separator />
@@ -698,9 +605,53 @@ function Stepper({
   );
 }
 
+// ---------- Repos summary ----------
+
+function ReposSummaryCard({ hasToken }: { hasToken: boolean }) {
+  const { repos, isLoading } = useBoardRepos();
+  const defaultRepo = repos.find((r) => r.is_default) ?? repos[0] ?? null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Repositories</CardTitle>
+      </CardHeader>
+      <CardContent className="gap-3">
+        {!hasToken ? (
+          <Text variant="small" className="text-muted">
+            Connect GitHub above before adding repositories.
+          </Text>
+        ) : isLoading ? (
+          <Text variant="small" className="text-muted">
+            Loading…
+          </Text>
+        ) : repos.length === 0 ? (
+          <Text variant="small" className="text-muted">
+            No repositories connected yet.
+          </Text>
+        ) : (
+          <View className="gap-1">
+            <Text variant="small">
+              {repos.length} {repos.length === 1 ? "repo" : "repos"} connected
+            </Text>
+            {defaultRepo ? (
+              <Text variant="small" className="text-muted">
+                Default: {defaultRepo.owner}/{defaultRepo.name}
+              </Text>
+            ) : null}
+          </View>
+        )}
+        <Button variant="outline" onPress={() => router.push("/repos" as never)}>
+          Manage repos →
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ---------- About ----------
 
-const REPO_URL = "https://github.com/teslashibe/eva-board";
+const REPO_URL = "https://github.com/EvaEverywhere/eva-board";
 
 function AboutCard() {
   return (

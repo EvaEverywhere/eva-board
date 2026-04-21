@@ -33,6 +33,7 @@ export type AgentStatus =
 export type BoardCard = {
   id: string;
   user_id: string;
+  repo_id?: string;
   title: string;
   description: string;
   column: BoardColumn;
@@ -50,6 +51,34 @@ export type BoardCard = {
 export type CreateCardRequest = {
   title: string;
   description: string;
+};
+
+export type ListCardsOptions = {
+  column?: BoardColumn;
+  repoId?: string;
+};
+
+// BoardRepo is one of the user's connected GitHub repositories (a row
+// in the board_repos table). Distinct from `Repo` below, which is a
+// snapshot from the GitHub API used to populate the "add repo" picker.
+export type BoardRepo = {
+  id: string;
+  user_id: string;
+  owner: string;
+  name: string;
+  repo_path: string;
+  default_branch: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AddRepoRequest = {
+  owner: string;
+  name: string;
+  repo_path: string;
+  default_branch?: string;
+  set_default?: boolean;
 };
 
 export type UpdateCardRequest = {
