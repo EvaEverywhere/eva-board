@@ -1,5 +1,8 @@
 # Eva Board
 
+[![Backend CI](https://github.com/EvaEverywhere/eva-board/actions/workflows/backend.yml/badge.svg)](https://github.com/EvaEverywhere/eva-board/actions/workflows/backend.yml)
+[![Mobile CI](https://github.com/EvaEverywhere/eva-board/actions/workflows/mobile.yml/badge.svg)](https://github.com/EvaEverywhere/eva-board/actions/workflows/mobile.yml)
+
 Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop.
 
 ## How it works
