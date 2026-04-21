@@ -1,17 +1,17 @@
 name: backend
 
 on:
-  push:
-    paths:
-      - "backend/**"
-      - ".github/workflows/backend.yml"
   pull_request:
     paths:
       - "backend/**"
       - ".github/workflows/backend.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,8 +21,17 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          go-version: "1.23"
+          cache-dependency-path: backend/go.sum
 
       - run: go mod download
       - run: go build ./...
-      - run: go test ./...
+      - run: go vet ./...
+      - run: go test ./... -short
+      - name: gofmt
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Unformatted files:"
+            gofmt -l .
+            exit 1
+          fi

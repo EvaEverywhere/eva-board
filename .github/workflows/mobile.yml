@@ -1,14 +1,14 @@
 name: mobile
 
 on:
-  push:
-    paths:
-      - "mobile/**"
-      - ".github/workflows/mobile.yml"
   pull_request:
     paths:
       - "mobile/**"
       - ".github/workflows/mobile.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
 
 jobs:
   typecheck:
@@ -25,5 +25,5 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
-      - run: npm install
+      - run: npm ci
       - run: npx tsc --noEmit

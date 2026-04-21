@@ -7,7 +7,7 @@ on:
       - "v*.*.*"
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/eva-board-api
+  IMAGE_NAME: ghcr.io/evaeverywhere/eva-board
 
 jobs:
   build:
@@ -29,14 +29,16 @@ jobs:
       - name: Derive image tags
         id: tags
         run: |
-          VERSION_TAG="${GITHUB_REF_NAME}"
-          echo "version=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tags=${IMAGE_NAME}:${GITHUB_REF_NAME},${IMAGE_NAME}:latest" >> "$GITHUB_OUTPUT"
+          else
+            SHORT_SHA="${GITHUB_SHA::7}"
+            echo "tags=${IMAGE_NAME}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v5
         with:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
