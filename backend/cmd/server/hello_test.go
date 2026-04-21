@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,9 +12,7 @@ import (
 
 func TestHelloEndpoint(t *testing.T) {
 	app := fiber.New()
-	app.Get("/hello", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"message": "hello world"})
-	})
+	registerPublicRoutes(app)
 
 	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
 	resp, err := app.Test(req)
@@ -23,6 +22,10 @@ func TestHelloEndpoint(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected Content-Type to contain application/json, got %q", ct)
 	}
 
 	var body map[string]string

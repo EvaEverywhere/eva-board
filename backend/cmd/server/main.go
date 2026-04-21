@@ -59,9 +59,7 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	app.Get("/hello", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"message": "hello world"})
-	})
+	registerPublicRoutes(app)
 
 	app.Post("/auth/magic-link", fiberadapter.SendHandler(magicSvc))
 	app.Post("/auth/verify", fiberadapter.VerifyCodeHandler(magicSvc))
