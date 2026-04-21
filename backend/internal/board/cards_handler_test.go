@@ -74,7 +74,7 @@ func newCardsTestApp(t *testing.T, store cardStore, userID uuid.UUID, lc AgentLi
 		httputil.SetUserID(c, userID.String())
 		return c.Next()
 	})
-	h := NewCardsHandler(store, nil, nil, nil, nil)
+	h := NewCardsHandler(store, nil, nil, nil, nil, nil)
 	h.SetAgentFactory(func(ctx context.Context, _, _ uuid.UUID) (AgentLifecycle, error) {
 		return lc, nil
 	})
@@ -229,7 +229,7 @@ func TestCardsHandler_StopHitsSameManagerInstance(t *testing.T) {
 	})
 
 	lc := &recordingLifecycle{}
-	h := NewCardsHandler(store, nil, nil, nil, nil)
+	h := NewCardsHandler(store, nil, nil, nil, nil, nil)
 	h.SetAgentFactory(func(_ context.Context, _, _ uuid.UUID) (AgentLifecycle, error) {
 		return lc, nil
 	})
@@ -253,6 +253,123 @@ func TestCardsHandler_StopHitsSameManagerInstance(t *testing.T) {
 	}
 	if got := lc.Stops(); len(got) != 1 || got[0] != card.ID {
 		t.Fatalf("expected one StopAgent for %s, got %v", card.ID, got)
+	}
+}
+
+// TestCardsHandler_DraftCard_NoServiceReturns503 asserts the route
+// surfaces a 503 (not a 500 panic) when the server was built without a
+// draft service. The mobile client uses the 503 as a signal to fall
+// back to raw "Create".
+func TestCardsHandler_DraftCard_NoServiceReturns503(t *testing.T) {
+	store := newFakeCardStore()
+	userID := uuid.New()
+	app := newCardsTestApp(t, store, userID, &recordingLifecycle{})
+
+	body, _ := json.Marshal(map[string]string{"title": "idea", "description": "body"})
+	// resolveRepoID requires ?repo_id when repos is nil; we pass one
+	// so the request reaches the draft handler rather than stopping
+	// at the repo resolver.
+	url := "/board/cards/draft?repo_id=" + uuid.NewString()
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5_000)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.StatusCode)
+	}
+}
+
+// TestCardsHandler_DraftCard_HappyPath wires a real DraftService
+// backed by a fake repo locator and a fake codegen agent and asserts
+// the route decodes the draft and returns it verbatim.
+func TestCardsHandler_DraftCard_HappyPath(t *testing.T) {
+	store := newFakeCardStore()
+	userID := uuid.New()
+	repo := newDraftTestRepo()
+	canned := `{
+  "title": "Fix pagination on /items",
+  "description": "Pagination regressed when we added cursor support.",
+  "acceptance_criteria": [
+    "GET /items?cursor=<token> returns the next page",
+    "response includes next_cursor when more data exists"
+  ],
+  "reasoning": "Cursor logic is in items_handler.go; tests cover only the limit path."
+}`
+	fc := &fakeCodegen{reviewerOutputs: []string{canned}}
+	draftSvc := &DraftService{
+		repos: &fakeDraftRepoLocator{repo: repo},
+		agent: fc,
+	}
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		httputil.SetUserID(c, userID.String())
+		return c.Next()
+	})
+	h := NewCardsHandler(store, nil, nil, nil, nil, draftSvc)
+	h.Register(app)
+
+	body, _ := json.Marshal(map[string]string{"title": "pagination is broken", "description": ""})
+	url := "/board/cards/draft?repo_id=" + uuid.NewString()
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5_000)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var got CardDraft
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Title != "Fix pagination on /items" {
+		t.Errorf("title = %q, want %q", got.Title, "Fix pagination on /items")
+	}
+	if len(got.AcceptanceCriteria) != 2 {
+		t.Fatalf("acceptance_criteria len = %d, want 2", len(got.AcceptanceCriteria))
+	}
+	if got.Reasoning == "" {
+		t.Error("reasoning should be populated")
+	}
+}
+
+// TestCardsHandler_DraftCard_EmptyTitle asserts the route validates
+// the title before calling the (expensive) agent.
+func TestCardsHandler_DraftCard_EmptyTitle(t *testing.T) {
+	store := newFakeCardStore()
+	userID := uuid.New()
+	fc := &fakeCodegen{}
+	draftSvc := &DraftService{
+		repos: &fakeDraftRepoLocator{repo: newDraftTestRepo()},
+		agent: fc,
+	}
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		httputil.SetUserID(c, userID.String())
+		return c.Next()
+	})
+	h := NewCardsHandler(store, nil, nil, nil, nil, draftSvc)
+	h.Register(app)
+
+	body, _ := json.Marshal(map[string]string{"title": "   ", "description": ""})
+	url := "/board/cards/draft?repo_id=" + uuid.NewString()
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5_000)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+	if fc.Calls() != 0 {
+		t.Fatalf("agent should not have run for empty title, got %d calls", fc.Calls())
 	}
 }
 

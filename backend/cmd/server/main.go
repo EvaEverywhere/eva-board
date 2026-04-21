@@ -103,8 +103,13 @@ func main() {
 
 	settingsHandler := board.NewSettingsHandler(settingsSvc, agentRegistry)
 	reposHandler := board.NewReposHandler(reposSvc, ghFactory, settingsSvc, agentRegistry)
+	// DraftService reuses the shared codegen agent so the draft
+	// prompt runs in the user's repo worktree and benefits from any
+	// user-level CODEGEN_* overrides already folded into the shared
+	// instance at startup.
+	draftSvc := board.NewDraftService(reposSvc, codegenAgent)
 	cardsHandler := board.NewCardsHandler(
-		cardsSvc, settingsSvc, reposSvc, agentRegistry, boardBroker,
+		cardsSvc, settingsSvc, reposSvc, agentRegistry, boardBroker, draftSvc,
 	)
 	curateHandler := board.NewCurateHandler(
 		cardsSvc, settingsSvc, reposSvc, codegenAgent, ghFactory,

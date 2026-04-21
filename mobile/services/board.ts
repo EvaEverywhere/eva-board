@@ -14,6 +14,7 @@ import type {
   BoardColumn,
   BoardRepo,
   BoardSettings,
+  CardDraft,
   CleanupAction,
   CreateCardRequest,
   CurateResult,
@@ -53,6 +54,23 @@ export async function createCard(
   return request<BoardCard>(`/api/board/cards${query}`, {
     method: "POST",
     body: JSON.stringify(req),
+  });
+}
+
+// draftCard asks the backend to expand a rough idea into a structured
+// CardDraft via the configured codegen agent running in the target
+// repo's worktree. Returns 503 when the server was built without a
+// draft service, in which case callers should surface the error and
+// let the user fall back to raw "Create".
+export async function draftCard(req: {
+  title: string;
+  description: string;
+  repo_id?: string;
+}): Promise<CardDraft> {
+  const query = req.repo_id ? `?repo_id=${encodeURIComponent(req.repo_id)}` : "";
+  return request<CardDraft>(`/api/board/cards/draft${query}`, {
+    method: "POST",
+    body: JSON.stringify({ title: req.title, description: req.description }),
   });
 }
 

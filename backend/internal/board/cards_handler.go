@@ -55,6 +55,7 @@ type CardsHandler struct {
 	repos    *ReposService
 	registry *AgentRegistry
 	broker   *Broker
+	draft    *DraftService
 
 	// agentFactory is set by tests via SetAgentFactory to substitute
 	// the registry-backed lifecycle resolution. nil means use the
@@ -62,9 +63,10 @@ type CardsHandler struct {
 	agentFactory AgentLifecycleFactory
 }
 
-// NewCardsHandler builds a CardsHandler. broker, registry and repos
-// may be nil in test binaries that don't exercise the corresponding
-// surfaces; agent routes surface a 503 when registry is nil and
+// NewCardsHandler builds a CardsHandler. broker, registry, repos and
+// draft may be nil in test binaries that don't exercise the
+// corresponding surfaces; agent routes surface a 503 when registry is
+// nil, the draft route surfaces a 503 when draft is nil, and
 // list/create surface a 400 when repos is nil and no ?repo_id is
 // supplied.
 func NewCardsHandler(
@@ -73,6 +75,7 @@ func NewCardsHandler(
 	repos *ReposService,
 	registry *AgentRegistry,
 	broker *Broker,
+	draft *DraftService,
 ) *CardsHandler {
 	return &CardsHandler{
 		cards:    cards,
@@ -80,6 +83,7 @@ func NewCardsHandler(
 		repos:    repos,
 		registry: registry,
 		broker:   broker,
+		draft:    draft,
 	}
 }
 
@@ -89,6 +93,9 @@ func (h *CardsHandler) Register(r fiber.Router) {
 	g := r.Group("/board/cards")
 	g.Get("/", h.list)
 	g.Post("/", h.create)
+	// draft is registered under /board/cards/draft and must be mounted
+	// before /:id handlers so the literal path wins.
+	g.Post("/draft", h.draftCard)
 	g.Get("/:id", h.get)
 	g.Put("/:id", h.update)
 	g.Delete("/:id", h.delete)
@@ -159,6 +166,11 @@ type createCardBody struct {
 	Description string `json:"description"`
 }
 
+type draftCardBody struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
 type updateCardBody struct {
 	Title       *string        `json:"title,omitempty"`
 	Description *string        `json:"description,omitempty"`
@@ -212,6 +224,39 @@ func (h *CardsHandler) create(c *fiber.Ctx) error {
 		return apperrors.Handle(c, mapCardError(err))
 	}
 	return c.Status(http.StatusCreated).JSON(toCardView(card))
+}
+
+// draftCard expands a user's rough "title + description" pair into a
+// structured CardDraft via the configured codegen agent. No card is
+// persisted — the client shows the draft in the New Card modal for
+// inline editing, then POSTs the edited result to the normal create
+// endpoint. Returns 503 when the server was built without a draft
+// service (e.g. codegen not configured) so the client can fall back to
+// raw "Create".
+func (h *CardsHandler) draftCard(c *fiber.Ctx) error {
+	if h.draft == nil {
+		return apperrors.Handle(c, apperrors.New(http.StatusServiceUnavailable, "card drafting is not configured on this server"))
+	}
+	userID, err := currentUserUUID(c)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	repoID, err := h.resolveRepoID(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	var body draftCardBody
+	if err := c.BodyParser(&body); err != nil {
+		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "invalid request body"))
+	}
+	if strings.TrimSpace(body.Title) == "" {
+		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "title is required"))
+	}
+	draft, err := h.draft.Draft(c.UserContext(), userID, repoID, body.Title, body.Description)
+	if err != nil {
+		return apperrors.Handle(c, apperrors.New(http.StatusBadGateway, "draft failed: "+err.Error()))
+	}
+	return c.JSON(draft)
 }
 
 // resolveRepoID picks the repo for list/create. Explicit ?repo_id

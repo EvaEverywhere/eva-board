@@ -164,6 +164,49 @@ Rules:
 	)
 }
 
+// BuildCardDraftPrompt asks Claude (running in the repo worktree) to
+// expand a user's rough idea into a concrete kanban card / GitHub issue
+// draft. The output is strict JSON so DraftService can decode it; see
+// CardDraft for the shape. Claude has cd/ls/cat access to the repo so
+// it can cite actual files/functions and produce testable AC.
+func BuildCardDraftPrompt(title, description string) string {
+	return `You are a senior product engineer drafting a kanban card for a dev team.
+
+The user has typed the following rough idea:
+
+  Title: ` + title + `
+  Description: ` + description + `
+
+You are running inside the user's repository. You may read files (cat,
+less, grep) to understand the codebase and produce a grounded,
+repo-aware draft. Do NOT modify any files; this is a planning task.
+
+Produce a JSON object with this exact shape:
+
+  {
+    "title": "<concise imperative title, max ~80 chars>",
+    "description": "<markdown description: 1-3 short paragraphs explaining
+                    the what and the why; cite specific files/functions
+                    from the repo when relevant>",
+    "acceptance_criteria": [
+      "<testable criterion in the form 'X does Y when Z'>",
+      ...
+    ],
+    "reasoning": "<1-2 sentence note on why these AC are the right ones;
+                   shown to the user so they can decide to trust the draft>"
+  }
+
+Rules:
+- 3 to 6 acceptance criteria, each one independently verifiable
+- Prefer concrete behaviors over vague goals
+- Do NOT include markdown checkbox syntax in acceptance_criteria; the
+  UI renders them as a checklist
+- Keep the description tight; detail belongs in the AC
+- Output ONLY the JSON object — no prose, no markdown fences
+
+Respond now with the JSON.`
+}
+
 // buildTriagePrompt frames Claude as a backlog triager analyzing both
 // the user's existing cards and the actual repo state.
 func buildTriagePrompt(backlog []Card, openIssues []github.Issue) string {

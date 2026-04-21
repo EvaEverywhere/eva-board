@@ -309,12 +309,15 @@ type fakeCodegen struct {
 
 func (f *fakeCodegen) Name() string { return "fake-codegen" }
 
-// isReviewerPrompt sniffs the prompt for reviewer-framing markers. Verify
-// and review prompts both start with "You are a senior code reviewer";
-// triage prompts start with "You are a senior engineer triaging".
+// isReviewerPrompt sniffs the prompt for "structured JSON output"
+// markers. Verify/review prompts start with "senior code reviewer",
+// triage with "senior engineer triaging", and card drafts with
+// "senior product engineer". All three expect a JSON response served
+// from the reviewerOutputs FIFO.
 func isReviewerPrompt(prompt string) bool {
 	return strings.Contains(prompt, "senior code reviewer") ||
-		strings.Contains(prompt, "senior engineer triaging")
+		strings.Contains(prompt, "senior engineer triaging") ||
+		strings.Contains(prompt, "senior product engineer")
 }
 
 func (f *fakeCodegen) Run(ctx context.Context, prompt, workDir string, _ ...codegen.RunOption) (codegen.Result, error) {
