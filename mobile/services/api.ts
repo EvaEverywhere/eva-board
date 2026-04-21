@@ -50,19 +50,26 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   };
 
   if (auth) {
-    // Wait briefly for the AuthSessionProvider to register an access token
-    // provider. On a deep-link/direct-navigate the provider mounts in a
-    // useEffect and may not have registered yet by the time the first
-    // screen issues a fetch.
+    // Wait for the AuthSessionProvider to register a provider AND for that
+    // provider to actually return a token. On a deep-link auth the
+    // (app) screens mount the moment isAuthenticated flips true, but
+    // tokenRef + writeStoredToken complete in the same microtask — a
+    // useBoardRepos that fires its initial fetch on mount can race the
+    // token landing in the ref. We poll up to 2s; thereafter we treat
+    // the absence as a real auth failure.
     let waited = 0;
-    while (!accessTokenProvider && waited < 1500) {
+    let token: string | null = null;
+    while (waited < 2000) {
+      if (accessTokenProvider) {
+        token = await accessTokenProvider();
+        if (token) break;
+      }
       await new Promise((resolve) => setTimeout(resolve, 50));
       waited += 50;
     }
     if (!accessTokenProvider) {
       throw new AuthenticationError(401, "Authentication provider is not configured");
     }
-    const token = await accessTokenProvider();
     if (!token) {
       throw new AuthenticationError(401, "Missing access token");
     }

@@ -16,6 +16,36 @@ reload.
 - For ngrok-based reachability: an [ngrok](https://ngrok.com) account
   (free tier is fine) and the `ngrok` CLI installed and authed
 
+## Path 0 — iOS Simulator (fastest, Mac-only, no phone needed)
+
+If you just want to see Eva Board running as a native app without
+touching EAS or an Apple Developer account, use the iOS Simulator.
+Requires Xcode + CocoaPods installed.
+
+```bash
+# one-time: generates mobile/ios/ and installs pods (~3-5 min)
+make sim-ios-prebuild
+
+# builds, installs to default simulator, launches, starts Metro (~10 min first build)
+make sim-ios
+```
+
+The simulator shares your Mac's loopback, so the app reaches
+`http://localhost:8090` directly — no LAN IP or ngrok needed.
+
+To sign in without waiting for an email, issue a dev JWT against your
+local API and deep-link it into the simulator:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8090/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","name":"You"}' | jq -r .token)
+xcrun simctl openurl booted "eva-board://?token=$TOKEN"
+```
+
+After the first build, subsequent changes hot-reload via Metro
+automatically.
+
 ## Path A — Quick start with Expo Go (no native modules)
 
 Fastest path to "running on my phone". Limitation: any custom native
