@@ -1,3 +1,8 @@
+---
+title: Mobile (iOS / Android)
+sidebar_position: 6
+---
+
 # Phone Dev Setup
 
 End-to-end guide for installing Eva Board on a real iPhone or Android
@@ -173,7 +178,7 @@ magic-link emails point at a publicly reachable host.
 ### Deployed backend (always-on, no Mac required)
 
 Deploy the backend to your hosting of choice
-(see [SELF_HOSTING.md](SELF_HOSTING.md)) and either bake the URL in:
+(see [self-hosting.md](./self-hosting.md)) and either bake the URL in:
 
 ```bash
 EXPO_PUBLIC_API_URL=https://api.example.com make phone-dev

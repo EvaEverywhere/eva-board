@@ -3,6 +3,8 @@
 [![Backend CI](https://github.com/EvaEverywhere/eva-board/actions/workflows/backend.yml/badge.svg)](https://github.com/EvaEverywhere/eva-board/actions/workflows/backend.yml)
 [![Mobile CI](https://github.com/EvaEverywhere/eva-board/actions/workflows/mobile.yml/badge.svg)](https://github.com/EvaEverywhere/eva-board/actions/workflows/mobile.yml)
 
+**📖 [Documentation site](https://evaeverywhere.github.io/eva-board/)**
+
 Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop.
 
 ## Demo
@@ -63,14 +65,15 @@ make up
 
 ## Mobile (iOS / Android)
 
-Eva Board ships as a React Native app. To install on your phone and develop with hot-reload from your Mac, see [docs/PHONE_DEV_SETUP.md](docs/PHONE_DEV_SETUP.md).
+Eva Board ships as a React Native app. To install on your phone and develop with hot-reload from your Mac, see [docs/mobile.md](docs/mobile.md).
 
 The backend URL can be changed at runtime from **Settings → Backend** in the app — no rebuild needed when switching between localhost, ngrok, or a deployed instance.
 
 ## Documentation
 
-- [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) — deploy with Docker Compose or a single binary, reverse proxy, backups, agent CLI setup, GitHub webhook setup.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview, the autonomous loop, package map, data model, SSE design, security model.
+- **[Documentation site](https://evaeverywhere.github.io/eva-board/)** — full docs: quickstart, concepts, self-hosting, architecture, mobile.
+- [docs/self-hosting.md](docs/self-hosting.md) — deploy with Docker Compose or a single binary, reverse proxy, backups, agent CLI setup, GitHub webhook setup.
+- [docs/architecture.md](docs/architecture.md) — system overview, the autonomous loop, package map, data model, SSE design, security model.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — development setup and PR conventions.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1 community guidelines.
 - [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
