@@ -13,6 +13,11 @@ import { useBoardRepos } from "@/hooks/useBoardRepos";
 import { useBoardSettings } from "@/hooks/useBoardSettings";
 import { listRepos, updateBoardSettings } from "@/services/board";
 import type { BoardSettings } from "@/services/boardTypes";
+import {
+  getDefaultServerUrl,
+  getServerUrlSync,
+  setServerUrl,
+} from "@/services/serverUrl";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
 
 // AgentPreset describes a one-click coding-agent configuration the user
@@ -142,6 +147,8 @@ export default function SettingsScreen() {
           settingsError={error}
           onChanged={refresh}
         />
+
+        <BackendCard />
 
         <ReposSummaryCard hasToken={Boolean(settings?.has_github_token)} />
 
@@ -360,6 +367,110 @@ function GitHubCard({
         {isLoadingSettings ? (
           <Text variant="small" className="text-muted">Loading settings...</Text>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------- Backend ----------
+
+function BackendCard() {
+  const defaultUrl = getDefaultServerUrl();
+  const [currentUrl, setCurrentUrl] = useState<string>(() => getServerUrlSync());
+  const [input, setInput] = useState<string>(() => {
+    const sync = getServerUrlSync();
+    return sync === defaultUrl ? "" : sync;
+  });
+  const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const isOverridden = currentUrl !== defaultUrl;
+
+  const handleSave = async () => {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      Alert.alert("Server URL required", "Enter a URL or use 'Reset to default'.");
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    try {
+      await setServerUrl(trimmed);
+      setCurrentUrl(getServerUrlSync());
+      setNotice("URL updated. Reload the app or pull-to-refresh to use the new server.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save URL";
+      Alert.alert("Save failed", message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setResetting(true);
+    setNotice(null);
+    try {
+      await setServerUrl(null);
+      setInput("");
+      setCurrentUrl(getServerUrlSync());
+      setNotice("Reset to default. Reload the app or pull-to-refresh to use the default server.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to reset URL";
+      Alert.alert("Reset failed", message);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <View className="flex-row items-center justify-between">
+          <CardTitle>Backend</CardTitle>
+          {isOverridden ? (
+            <Badge variant="default">Override</Badge>
+          ) : (
+            <Badge variant="outline">Default</Badge>
+          )}
+        </View>
+      </CardHeader>
+      <CardContent className="gap-4">
+        <View className="gap-1">
+          <Text variant="small" className="text-muted">Current</Text>
+          <Text>{currentUrl}</Text>
+          <Text variant="small" className="text-muted">
+            Default: {defaultUrl}
+          </Text>
+        </View>
+
+        <Input
+          label="Server URL"
+          value={input}
+          onChangeText={setInput}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          placeholder="https://your-eva-board.example.com"
+        />
+
+        {notice ? (
+          <Text variant="small" className="text-muted">{notice}</Text>
+        ) : null}
+
+        <View className="flex-row items-center justify-between gap-2">
+          <Button
+            variant="outline"
+            onPress={handleReset}
+            loading={resetting}
+            disabled={!isOverridden && !input.trim()}
+          >
+            Reset to default
+          </Button>
+          <Button onPress={handleSave} loading={saving} disabled={!input.trim()}>
+            Save
+          </Button>
+        </View>
       </CardContent>
     </Card>
   );
