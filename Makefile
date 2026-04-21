@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help setup doctor up down restart logs dev dev-db build test lint fmt migrate db-shell db-reset mobile mobile-web mobile-install seed token clean phone-build-ios phone-build-android phone-dev phone-tunnel
+.PHONY: help setup doctor up down restart logs dev dev-db build test lint fmt migrate db-shell db-reset mobile mobile-web mobile-install seed token clean sim-ios sim-ios-prebuild phone-build-ios phone-build-android phone-dev phone-tunnel
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -139,6 +139,13 @@ token: seed ## Alias for seed token command
 clean: ## Remove generated artifacts
 	$(COMPOSE) down -v
 	rm -rf backend/bin mobile/node_modules mobile/.expo
+
+sim-ios-prebuild: ## One-time: generate mobile/ios/ and install pods
+	cd mobile && npx expo prebuild --platform ios --no-install
+	cd mobile/ios && pod install
+
+sim-ios: ## Build + install + launch Eva Board in the iOS Simulator (uses local xcodebuild, no EAS account needed)
+	cd mobile && npx expo run:ios
 
 phone-build-ios: ## Build iOS dev client via EAS (cloud build, ~15min)
 	cd mobile && npx eas build --profile development --platform ios
