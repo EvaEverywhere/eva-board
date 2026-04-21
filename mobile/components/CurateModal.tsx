@@ -33,6 +33,11 @@ type Props = {
   onClose: () => void;
   onApplied: () => void;
   cards: BoardCard[];
+  // repoId scopes triage/spring-clean/curate to the currently selected
+  // board so the user can't accidentally curate a different repo than
+  // the one they're looking at. Optional — when omitted the backend
+  // falls back to the user's default repo for legacy callers.
+  repoId?: string;
 };
 
 type ApplyState = "idle" | "applying" | "success" | "error";
@@ -63,7 +68,7 @@ function actionKey(a: CleanupAction, idx: number): string {
   return `${a.type}-${a.target}-${idx}`;
 }
 
-export function CurateModal({ visible, onClose, onApplied, cards }: Props) {
+export function CurateModal({ visible, onClose, onApplied, cards, repoId }: Props) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CurateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,14 +111,14 @@ export function CurateModal({ visible, onClose, onApplied, cards }: Props) {
     setApplyState("idle");
     setApplySummary(null);
     try {
-      const res = await runCurate();
+      const res = await runCurate(repoId);
       setResult(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run curate");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [repoId]);
 
   const toggleProposal = useCallback((key: string, approved: boolean) => {
     setApprovedProposals((prev) => {
@@ -148,8 +153,8 @@ export function CurateModal({ visible, onClose, onApplied, cards }: Props) {
     setApplyState("applying");
     setError(null);
     try {
-      if (proposals.length > 0) await applyTriage(proposals);
-      if (actions.length > 0) await applySpringClean(actions);
+      if (proposals.length > 0) await applyTriage(proposals, repoId);
+      if (actions.length > 0) await applySpringClean(actions, repoId);
       setApplyState("success");
       setApplySummary(
         `Applied ${proposals.length} triage proposal${proposals.length === 1 ? "" : "s"} and ${actions.length} cleanup action${actions.length === 1 ? "" : "s"}.`,
@@ -159,7 +164,7 @@ export function CurateModal({ visible, onClose, onApplied, cards }: Props) {
       setApplyState("error");
       setError(err instanceof Error ? err.message : "Failed to apply changes");
     }
-  }, [result, approvedProposals, approvedActions, onApplied]);
+  }, [result, approvedProposals, approvedActions, onApplied, repoId]);
 
   const proposals = result?.triage_proposals ?? [];
   const actions = result?.cleanup_actions ?? [];

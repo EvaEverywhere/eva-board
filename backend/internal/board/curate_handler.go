@@ -9,7 +9,9 @@ package board
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -29,9 +31,9 @@ type CurateHandler struct {
 	ghFactory github.ClientFactory
 }
 
-// NewCurateHandler builds a CurateHandler. repos is used to scope
-// triage/curate to the user's default board until per-request repo
-// selection lands in PR-3.
+// NewCurateHandler builds a CurateHandler. The handler resolves the
+// target repo per-request: ?repo_id wins, otherwise it falls back to
+// the user's default repo so the legacy single-repo UI still works.
 func NewCurateHandler(
 	cards cardStore,
 	settings *SettingsService,
@@ -72,7 +74,11 @@ func (h *CurateHandler) analyzeTriage(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	svc, err := h.buildTriageService(c.UserContext(), userID)
+	repo, err := h.resolveRepoFromQuery(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	svc, err := h.buildTriageService(c.UserContext(), userID, repo)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -92,7 +98,11 @@ func (h *CurateHandler) applyTriage(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "invalid request body"))
 	}
-	svc, err := h.buildTriageService(c.UserContext(), userID)
+	repo, err := h.resolveRepoFromQuery(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	svc, err := h.buildTriageService(c.UserContext(), userID, repo)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -107,7 +117,11 @@ func (h *CurateHandler) analyzeSpringClean(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	svc, err := h.buildSpringCleanService(c.UserContext(), userID)
+	repo, err := h.resolveRepoFromQuery(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	svc, err := h.buildSpringCleanService(c.UserContext(), userID, repo)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -127,7 +141,11 @@ func (h *CurateHandler) applySpringClean(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "invalid request body"))
 	}
-	svc, err := h.buildSpringCleanService(c.UserContext(), userID)
+	repo, err := h.resolveRepoFromQuery(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	svc, err := h.buildSpringCleanService(c.UserContext(), userID, repo)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -142,11 +160,15 @@ func (h *CurateHandler) curate(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	triage, err := h.buildTriageService(c.UserContext(), userID)
+	repo, err := h.resolveRepoFromQuery(c.UserContext(), c, userID)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	cleanup, err := h.buildSpringCleanService(c.UserContext(), userID)
+	triage, err := h.buildTriageService(c.UserContext(), userID, repo)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	cleanup, err := h.buildSpringCleanService(c.UserContext(), userID, repo)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -157,13 +179,46 @@ func (h *CurateHandler) curate(c *fiber.Ctx) error {
 	return c.JSON(res)
 }
 
-func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID) (*TriageService, error) {
-	if h.settings == nil || h.agent == nil || h.repos == nil {
-		return nil, apperrors.New(http.StatusServiceUnavailable, "triage is not configured on this server")
+// resolveRepoFromQuery picks the repo for a curate-family call.
+// Mirrors CardsHandler.resolveRepoID: explicit ?repo_id wins (after
+// ownership validation); otherwise we fall back to the user's default
+// repo so the legacy UI keeps working. The H1 / M4 audit fix means
+// callers that have repos but no default get a clearer error here too.
+func (h *CurateHandler) resolveRepoFromQuery(ctx context.Context, c *fiber.Ctx, userID uuid.UUID) (*Repo, error) {
+	if h.repos == nil {
+		return nil, apperrors.New(http.StatusServiceUnavailable, "board repos service is not configured on this server")
+	}
+	if raw := strings.TrimSpace(c.Query("repo_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, apperrors.New(http.StatusBadRequest, "invalid repo_id")
+		}
+		repo, err := h.repos.Get(ctx, userID, id)
+		if err != nil {
+			return nil, apperrors.New(http.StatusBadRequest, "repo_id not found for user")
+		}
+		return repo, nil
 	}
 	repo, err := h.repos.GetDefault(ctx, userID)
-	if err != nil {
-		return nil, apperrors.New(http.StatusBadRequest, "no default board repo configured for user")
+	if err == nil {
+		return repo, nil
+	}
+	if errors.Is(err, ErrRepoNotFound) {
+		existing, listErr := h.repos.List(ctx, userID)
+		if listErr == nil && len(existing) == 0 {
+			return nil, apperrors.New(http.StatusBadRequest, "no repositories connected — add one in Settings → Manage repos")
+		}
+		return nil, apperrors.New(http.StatusBadRequest, "no default repository selected — pick one in Repos screen, or pass ?repo_id=<id>")
+	}
+	return nil, err
+}
+
+func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID, repo *Repo) (*TriageService, error) {
+	if h.settings == nil || h.agent == nil {
+		return nil, apperrors.New(http.StatusServiceUnavailable, "triage is not configured on this server")
+	}
+	if repo == nil {
+		return nil, apperrors.New(http.StatusBadRequest, "triage requires a repo")
 	}
 	cfg := TriageConfig{
 		WorkDir:   repo.RepoPath,
@@ -180,13 +235,12 @@ func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID
 	return NewTriageService(h.cards, h.agent, cfg), nil
 }
 
-func (h *CurateHandler) buildSpringCleanService(ctx context.Context, userID uuid.UUID) (*SpringCleanService, error) {
-	if h.settings == nil || h.repos == nil {
+func (h *CurateHandler) buildSpringCleanService(ctx context.Context, userID uuid.UUID, repo *Repo) (*SpringCleanService, error) {
+	if h.settings == nil {
 		return nil, apperrors.New(http.StatusServiceUnavailable, "spring clean is not configured on this server")
 	}
-	repo, err := h.repos.GetDefault(ctx, userID)
-	if err != nil {
-		return nil, apperrors.New(http.StatusBadRequest, "no default board repo configured for user")
+	if repo == nil {
+		return nil, apperrors.New(http.StatusBadRequest, "spring clean requires a repo")
 	}
 	cfg := SpringCleanConfig{
 		RepoOwner:    repo.Owner,

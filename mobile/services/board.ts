@@ -178,37 +178,63 @@ export async function setDefaultBoardRepo(id: string): Promise<BoardRepo> {
 }
 
 // ---------- Curate (triage + spring clean) ----------
+//
+// Each curate-family call accepts an optional repoId. The backend
+// resolves it the same way as cards routes: explicit ?repo_id wins,
+// otherwise falls back to the user's default repo. Threading the repo
+// from the board UI prevents the cross-repo footgun where the UI shows
+// repo B but Curate ran on default repo A.
 
-export async function runTriage(): Promise<{ proposals: TriageProposal[] }> {
-  return request<{ proposals: TriageProposal[] }>("/api/board/triage", {
-    method: "POST",
-  });
+function repoIdQuery(repoId?: string): string {
+  return repoId ? `?repo_id=${encodeURIComponent(repoId)}` : "";
+}
+
+export async function runTriage(
+  repoId?: string,
+): Promise<{ proposals: TriageProposal[] }> {
+  return request<{ proposals: TriageProposal[] }>(
+    `/api/board/triage${repoIdQuery(repoId)}`,
+    { method: "POST" },
+  );
 }
 
 export async function applyTriage(
   proposals: TriageProposal[],
+  repoId?: string,
 ): Promise<void> {
-  await request<{ applied: number }>("/api/board/triage/apply", {
-    method: "POST",
-    body: JSON.stringify({ proposals }),
-  });
+  await request<{ applied: number }>(
+    `/api/board/triage/apply${repoIdQuery(repoId)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ proposals }),
+    },
+  );
 }
 
-export async function runSpringClean(): Promise<{ actions: CleanupAction[] }> {
-  return request<{ actions: CleanupAction[] }>("/api/board/springclean", {
-    method: "POST",
-  });
+export async function runSpringClean(
+  repoId?: string,
+): Promise<{ actions: CleanupAction[] }> {
+  return request<{ actions: CleanupAction[] }>(
+    `/api/board/springclean${repoIdQuery(repoId)}`,
+    { method: "POST" },
+  );
 }
 
 export async function applySpringClean(
   actions: CleanupAction[],
+  repoId?: string,
 ): Promise<void> {
-  await request<{ applied: number }>("/api/board/springclean/apply", {
-    method: "POST",
-    body: JSON.stringify({ actions }),
-  });
+  await request<{ applied: number }>(
+    `/api/board/springclean/apply${repoIdQuery(repoId)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ actions }),
+    },
+  );
 }
 
-export async function runCurate(): Promise<CurateResult> {
-  return request<CurateResult>("/api/board/curate", { method: "POST" });
+export async function runCurate(repoId?: string): Promise<CurateResult> {
+  return request<CurateResult>(`/api/board/curate${repoIdQuery(repoId)}`, {
+    method: "POST",
+  });
 }

@@ -270,6 +270,7 @@ export default function BoardScreen() {
           void refresh();
         }}
         cards={cards}
+        repoId={selectedRepo?.id}
       />
     </View>
   );

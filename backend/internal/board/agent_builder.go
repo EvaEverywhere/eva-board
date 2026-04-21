@@ -159,6 +159,8 @@ func managerSignature(repo *Repo, st Settings, code codegen.Config) string {
 		code.Model,
 		code.Command,
 		strings.Join(code.Args, ","),
+		code.Timeout.String(),
+		strconv.Itoa(code.MaxOutputBytes),
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return hex.EncodeToString(sum[:])
