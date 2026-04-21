@@ -1,16 +1,80 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help setup up down restart logs dev dev-db build test lint fmt migrate db-shell db-reset mobile mobile-web mobile-install seed token clean
+.PHONY: help setup doctor up down restart logs dev dev-db build test lint fmt migrate db-shell db-reset mobile mobile-web mobile-install seed token clean
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 setup: ## Bootstrap .env files and install mobile deps
+	@if [ ! -f .env ]; then cp .env.example .env; fi
 	@if [ ! -f backend/.env ]; then cp backend/.env.example backend/.env; fi
 	@if [ ! -f mobile/.env.local ]; then cp mobile/.env.example mobile/.env.local; fi
 	@npm install --prefix mobile
 	@echo "Setup complete. Run 'make dev' or 'make up'."
+
+doctor: ## Check local prerequisites (Docker, Go, Node, claude, .env)
+	@echo "Eva Board — first-run prerequisite check"
+	@echo "----------------------------------------"
+	@ok=1; \
+	if command -v docker >/dev/null 2>&1; then \
+	  echo "  [ok]   docker:  $$(docker --version)"; \
+	else \
+	  echo "  [FAIL] docker:  not found (install Docker Desktop)"; ok=0; \
+	fi; \
+	if command -v go >/dev/null 2>&1; then \
+	  goVer=$$(go version | awk '{print $$3}' | sed 's/go//'); \
+	  goMajor=$$(echo $$goVer | cut -d. -f1); goMinor=$$(echo $$goVer | cut -d. -f2); \
+	  if [ "$$goMajor" -gt 1 ] || { [ "$$goMajor" -eq 1 ] && [ "$$goMinor" -ge 23 ]; }; then \
+	    echo "  [ok]   go:      $$goVer"; \
+	  else \
+	    echo "  [FAIL] go:      $$goVer (need >= 1.23)"; ok=0; \
+	  fi; \
+	else \
+	  echo "  [FAIL] go:      not found (need >= 1.23 for host dev)"; ok=0; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+	  nodeVer=$$(node --version | sed 's/v//'); \
+	  nodeMajor=$$(echo $$nodeVer | cut -d. -f1); \
+	  if [ "$$nodeMajor" -ge 20 ]; then \
+	    echo "  [ok]   node:    $$nodeVer"; \
+	  else \
+	    echo "  [FAIL] node:    $$nodeVer (need >= 20)"; ok=0; \
+	  fi; \
+	else \
+	  echo "  [FAIL] node:    not found (need >= 20 for mobile)"; ok=0; \
+	fi; \
+	if command -v claude >/dev/null 2>&1; then \
+	  echo "  [ok]   claude:  $$(command -v claude)"; \
+	else \
+	  echo "  [warn] claude:  not found (only required for codegen agent runs)"; \
+	fi; \
+	if [ -f .env ]; then \
+	  echo "  [ok]   .env:    present"; \
+	else \
+	  if [ -f .env.example ]; then \
+	    cp .env.example .env; \
+	    echo "  [ok]   .env:    created from .env.example"; \
+	  else \
+	    echo "  [FAIL] .env:    missing and no .env.example to copy"; ok=0; \
+	  fi; \
+	fi; \
+	if [ -f backend/.env ]; then \
+	  echo "  [ok]   backend/.env: present"; \
+	else \
+	  if [ -f backend/.env.example ]; then \
+	    cp backend/.env.example backend/.env; \
+	    echo "  [ok]   backend/.env: created from backend/.env.example"; \
+	  else \
+	    echo "  [FAIL] backend/.env: missing"; ok=0; \
+	  fi; \
+	fi; \
+	echo "----------------------------------------"; \
+	if [ $$ok -eq 1 ]; then \
+	  echo "All required prerequisites satisfied. Try: make up"; \
+	else \
+	  echo "One or more required prerequisites are missing. See [FAIL] lines above."; exit 1; \
+	fi
 
 up: ## Run full stack in Docker (postgres + migrate + api)
 	$(COMPOSE) up --build -d

@@ -7,6 +7,8 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: eva_board
     ports:
+      # Host 5433 -> container 5432 (5433 chosen to avoid clashing with a
+      # local Postgres install on 5432).
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -16,6 +18,9 @@ services:
       timeout: 5s
       retries: 20
 
+  # One-shot migration runner. Runs `migrate up` against the postgres
+  # service and exits; the api service waits on it via
+  # `service_completed_successfully` so a fresh `make up` always migrates.
   migrate:
     build:
       context: ./backend
@@ -42,12 +47,19 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/eva_board?sslmode=disable
       APP_URL: http://localhost:8080
     ports:
+      # Host 8080 -> container 8080 (Fiber HTTP server, /health endpoint).
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
 volumes:
   pgdata:
