@@ -359,3 +359,58 @@ func TestSetPRAndReviewAndMetadata(t *testing.T) {
 		t.Fatalf("metadata not merged: %+v", got.Metadata)
 	}
 }
+
+// TestSetGitHubIssue covers the round trip of the issue number / URL
+// added in migration 008. The handler relies on Get returning these
+// fields after SetGitHubIssue so the create-card response can include
+// the linked issue without an extra round trip from the client.
+func TestSetGitHubIssue(t *testing.T) {
+	svc, pool := newTestService(t)
+	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
+	ctx := context.Background()
+
+	card, err := svc.Create(ctx, user, repo, CreateRequest{Title: "issue card"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.Get(ctx, user, card.ID)
+	if err != nil {
+		t.Fatalf("get before set: %v", err)
+	}
+	if got.GitHubIssueNumber != nil || got.GitHubIssueURL != nil {
+		t.Fatalf("fresh card should have no issue fields, got %+v / %+v", got.GitHubIssueNumber, got.GitHubIssueURL)
+	}
+
+	if err := svc.SetGitHubIssue(ctx, card.ID, 42, "https://github.com/o/r/issues/42"); err != nil {
+		t.Fatalf("set issue: %v", err)
+	}
+
+	got, err = svc.Get(ctx, user, card.ID)
+	if err != nil {
+		t.Fatalf("get after set: %v", err)
+	}
+	if got.GitHubIssueNumber == nil || *got.GitHubIssueNumber != 42 {
+		t.Fatalf("issue number not persisted: %+v", got.GitHubIssueNumber)
+	}
+	if got.GitHubIssueURL == nil || *got.GitHubIssueURL != "https://github.com/o/r/issues/42" {
+		t.Fatalf("issue url not persisted: %+v", got.GitHubIssueURL)
+	}
+
+	// Overwrite path: setting a different issue should replace, not
+	// append. This matters for an eventual "retry from UI" button.
+	if err := svc.SetGitHubIssue(ctx, card.ID, 43, "https://github.com/o/r/issues/43"); err != nil {
+		t.Fatalf("re-set issue: %v", err)
+	}
+	got, _ = svc.Get(ctx, user, card.ID)
+	if got.GitHubIssueNumber == nil || *got.GitHubIssueNumber != 43 {
+		t.Fatalf("issue number not overwritten: %+v", got.GitHubIssueNumber)
+	}
+
+	// Missing card → ErrCardNotFound (matches the other Set*
+	// methods).
+	if err := svc.SetGitHubIssue(ctx, uuid.New(), 1, "x"); err != ErrCardNotFound {
+		t.Fatalf("expected ErrCardNotFound for missing card, got %v", err)
+	}
+}

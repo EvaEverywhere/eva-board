@@ -47,9 +47,15 @@ type Card struct {
 	PRNumber       *int
 	PRURL          *string
 	ReviewStatus   *string
-	Metadata       map[string]any
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// GitHubIssueNumber is the issue created on GitHub when the card
+	// was first saved (when the user opted in / by default). Carrying
+	// it on the card lets the agent's PR body prepend "Closes #N" so
+	// merging the PR auto-closes the issue.
+	GitHubIssueNumber *int
+	GitHubIssueURL    *string
+	Metadata          map[string]any
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type CreateRequest struct {

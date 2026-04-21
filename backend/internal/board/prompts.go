@@ -295,8 +295,17 @@ type triageIssueWire struct {
 }
 
 // buildPRBody renders the PR body shown on GitHub after the loop succeeds.
+//
+// When the card has a linked GitHub issue (created at card-creation
+// time via the optional issue-push flow), we prepend a "Closes #N"
+// line so merging the PR auto-closes the issue. GitHub looks for this
+// line anywhere in the body but putting it at the top keeps it visible
+// to human reviewers too.
 func buildPRBody(card Card, criteria []CriterionResult, review ReviewResult) string {
 	var b strings.Builder
+	if card.GitHubIssueNumber != nil && *card.GitHubIssueNumber > 0 {
+		fmt.Fprintf(&b, "Closes #%d\n\n", *card.GitHubIssueNumber)
+	}
 	fmt.Fprintf(&b, "## %s\n\n", card.Title)
 
 	if strings.TrimSpace(card.Description) != "" {

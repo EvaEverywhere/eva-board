@@ -43,6 +43,8 @@ export type BoardCard = {
   pr_number?: number | null;
   pr_url?: string | null;
   review_status?: string | null;
+  github_issue_number?: number | null;
+  github_issue_url?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -51,6 +53,11 @@ export type BoardCard = {
 export type CreateCardRequest = {
   title: string;
   description: string;
+  // create_issue is sent verbatim to the backend and toggles whether
+  // the new card is pushed to GitHub as an issue. Omit (or true) to
+  // push; false to skip. The backend swallows GH errors so the card
+  // is always saved regardless.
+  create_issue?: boolean;
 };
 
 // CardDraft mirrors backend/internal/board.CardDraft. The UI shows the

@@ -32,6 +32,7 @@ func New(db *pgxpool.Pool) *Service {
 const cardSelect = `
 	id::text, user_id::text, COALESCE(repo_id::text, ''), title, description, column_name, position,
 	agent_status, worktree_branch, pr_number, pr_url, review_status,
+	github_issue_number, github_issue_url,
 	metadata, created_at, updated_at
 `
 
@@ -441,6 +442,25 @@ func (s *Service) SetPR(ctx context.Context, cardID uuid.UUID, number int, url s
 	return nil
 }
 
+// SetGitHubIssue records the GitHub issue created for this card. Safe
+// to call more than once; overwrites any prior values. The number is
+// also indexed (partial index) so issue->card lookups (e.g. webhook
+// "issue closed" events in a future iteration) stay cheap.
+func (s *Service) SetGitHubIssue(ctx context.Context, cardID uuid.UUID, number int, url string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE board_cards
+		SET github_issue_number = $2, github_issue_url = $3, updated_at = now()
+		WHERE id = $1
+	`, cardID, number, url)
+	if err != nil {
+		return fmt.Errorf("set github issue: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrCardNotFound
+	}
+	return nil
+}
+
 func (s *Service) SetReviewStatus(ctx context.Context, cardID uuid.UUID, status string) error {
 	tag, err := s.db.Exec(ctx, `
 		UPDATE board_cards SET review_status = $2, updated_at = now() WHERE id = $1
@@ -501,6 +521,8 @@ func scanCardRow(r rowScanner) (*Card, error) {
 		&c.PRNumber,
 		&c.PRURL,
 		&c.ReviewStatus,
+		&c.GitHubIssueNumber,
+		&c.GitHubIssueURL,
 		&rawMeta,
 		&c.CreatedAt,
 		&c.UpdatedAt,
