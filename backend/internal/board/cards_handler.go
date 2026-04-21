@@ -42,13 +42,14 @@ type AgentLifecycle interface {
 // AgentLifecycleFactory builds an AgentLifecycle for a given user.
 // Tests inject a recording factory; production goes through the
 // AgentRegistry on the handler.
-type AgentLifecycleFactory func(ctx context.Context, userID uuid.UUID) (AgentLifecycle, error)
+type AgentLifecycleFactory func(ctx context.Context, userID, repoID uuid.UUID) (AgentLifecycle, error)
 
 // CardsHandler exposes board card CRUD, move, and agent-lifecycle
 // routes.
 type CardsHandler struct {
 	cards    cardStore
 	settings *SettingsService
+	repos    *ReposService
 	registry *AgentRegistry
 	broker   *Broker
 
@@ -58,19 +59,22 @@ type CardsHandler struct {
 	agentFactory AgentLifecycleFactory
 }
 
-// NewCardsHandler builds a CardsHandler. broker and registry may be
-// nil in test binaries that don't exercise agent routes; settings is
-// required for the diff endpoint but agent routes will surface a 503
-// when registry is nil.
+// NewCardsHandler builds a CardsHandler. broker, registry and repos
+// may be nil in test binaries that don't exercise the corresponding
+// surfaces; agent routes surface a 503 when registry is nil and
+// list/create surface a 400 when repos is nil and no ?repo_id is
+// supplied.
 func NewCardsHandler(
 	cards cardStore,
 	settings *SettingsService,
+	repos *ReposService,
 	registry *AgentRegistry,
 	broker *Broker,
 ) *CardsHandler {
 	return &CardsHandler{
 		cards:    cards,
 		settings: settings,
+		repos:    repos,
 		registry: registry,
 		broker:   broker,
 	}
@@ -98,6 +102,7 @@ func (h *CardsHandler) Register(r fiber.Router) {
 type cardView struct {
 	ID             string         `json:"id"`
 	UserID         string         `json:"user_id"`
+	RepoID         string         `json:"repo_id,omitempty"`
 	Title          string         `json:"title"`
 	Description    string         `json:"description"`
 	Column         string         `json:"column"`
@@ -116,7 +121,7 @@ func toCardView(c *Card) cardView {
 	if c == nil {
 		return cardView{}
 	}
-	return cardView{
+	view := cardView{
 		ID:             c.ID.String(),
 		UserID:         c.UserID.String(),
 		Title:          c.Title,
@@ -132,6 +137,10 @@ func toCardView(c *Card) cardView {
 		CreatedAt:      c.CreatedAt,
 		UpdatedAt:      c.UpdatedAt,
 	}
+	if c.RepoID != uuid.Nil {
+		view.RepoID = c.RepoID.String()
+	}
+	return view
 }
 
 func toCardViews(cs []Card) []cardView {
@@ -167,8 +176,12 @@ func (h *CardsHandler) list(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
+	repoID, err := h.resolveRepoID(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
 	column := strings.TrimSpace(c.Query("column"))
-	cards, err := h.cards.List(c.UserContext(), userID, column)
+	cards, err := h.cards.List(c.UserContext(), userID, repoID, column)
 	if err != nil {
 		return apperrors.Handle(c, mapCardError(err))
 	}
@@ -180,11 +193,15 @@ func (h *CardsHandler) create(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
+	repoID, err := h.resolveRepoID(c.UserContext(), c, userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
 	var body createCardBody
 	if err := c.BodyParser(&body); err != nil {
 		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "invalid request body"))
 	}
-	card, err := h.cards.Create(c.UserContext(), userID, CreateRequest{
+	card, err := h.cards.Create(c.UserContext(), userID, repoID, CreateRequest{
 		Title:       body.Title,
 		Description: body.Description,
 	})
@@ -192,6 +209,35 @@ func (h *CardsHandler) create(c *fiber.Ctx) error {
 		return apperrors.Handle(c, mapCardError(err))
 	}
 	return c.Status(http.StatusCreated).JSON(toCardView(card))
+}
+
+// resolveRepoID picks the repo for list/create. Explicit ?repo_id
+// wins; absent that we fall back to the user's default repo. Returns
+// 400 when no repo can be resolved (no default and no explicit id),
+// because a card must be scoped to some board.
+func (h *CardsHandler) resolveRepoID(ctx context.Context, c *fiber.Ctx, userID uuid.UUID) (uuid.UUID, error) {
+	if raw := strings.TrimSpace(c.Query("repo_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return uuid.Nil, apperrors.New(http.StatusBadRequest, "invalid repo_id")
+		}
+		// Validate ownership when we have a repos service; without
+		// it we trust the caller (matches the test wiring).
+		if h.repos != nil {
+			if _, err := h.repos.Get(ctx, userID, id); err != nil {
+				return uuid.Nil, apperrors.New(http.StatusBadRequest, "repo_id not found for user")
+			}
+		}
+		return id, nil
+	}
+	if h.repos == nil {
+		return uuid.Nil, apperrors.New(http.StatusBadRequest, "repo_id is required")
+	}
+	repo, err := h.repos.GetDefault(ctx, userID)
+	if err != nil {
+		return uuid.Nil, apperrors.New(http.StatusBadRequest, "no default board repo configured for user")
+	}
+	return repo.ID, nil
 }
 
 func (h *CardsHandler) get(c *fiber.Ctx) error {
@@ -367,7 +413,11 @@ func (h *CardsHandler) agentFeedback(c *fiber.Ctx) error {
 	if feedback == "" {
 		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "feedback is required"))
 	}
-	lc, err := h.resolveLifecycle(c.UserContext(), userID)
+	repoID, err := h.repoForCard(c.UserContext(), userID, cardID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	lc, err := h.resolveLifecycle(c.UserContext(), userID, repoID)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
@@ -383,22 +433,54 @@ func (h *CardsHandler) SetAgentFactory(f AgentLifecycleFactory) {
 }
 
 // resolveLifecycle returns either the test-injected factory's
-// lifecycle or the registry-cached AgentManager for userID.
-func (h *CardsHandler) resolveLifecycle(ctx context.Context, userID uuid.UUID) (AgentLifecycle, error) {
+// lifecycle or the registry-cached AgentManager for (userID, repoID).
+// repoID is required: agents are now keyed per board so we never
+// silently fall back to the default repo here.
+func (h *CardsHandler) resolveLifecycle(ctx context.Context, userID, repoID uuid.UUID) (AgentLifecycle, error) {
 	if h.agentFactory != nil {
-		return h.agentFactory(ctx, userID)
+		return h.agentFactory(ctx, userID, repoID)
 	}
 	if h.registry == nil {
 		return nil, apperrors.New(http.StatusServiceUnavailable, "board agent is not configured on this server")
 	}
-	return h.registry.For(ctx, userID)
+	if repoID == uuid.Nil {
+		return nil, apperrors.New(http.StatusBadRequest, "card has no repo")
+	}
+	return h.registry.For(ctx, userID, repoID)
 }
 
-// startAgentForCard resolves the per-user manager from the registry
-// and starts the loop. StartAgent is idempotent inside the manager (no-op
-// if a run is already active for the card), so we don't gate here.
+// repoForCard returns the repo a card belongs to, falling back to the
+// user's default repo when the card has no repo_id (legacy data).
+// Used by the agent lifecycle and move handlers to pick the right
+// AgentManager.
+func (h *CardsHandler) repoForCard(ctx context.Context, userID, cardID uuid.UUID) (uuid.UUID, error) {
+	card, err := h.cards.Get(ctx, userID, cardID)
+	if err != nil {
+		return uuid.Nil, mapCardError(err)
+	}
+	if card.RepoID != uuid.Nil {
+		return card.RepoID, nil
+	}
+	if h.repos == nil {
+		return uuid.Nil, apperrors.New(http.StatusBadRequest, "card has no repo and no repos service configured")
+	}
+	repo, err := h.repos.GetDefault(ctx, userID)
+	if err != nil {
+		return uuid.Nil, apperrors.New(http.StatusBadRequest, "card has no repo and user has no default")
+	}
+	return repo.ID, nil
+}
+
+// startAgentForCard resolves the per-(user, repo) manager from the
+// registry and starts the loop. StartAgent is idempotent inside the
+// manager (no-op if a run is already active for the card), so we
+// don't gate here.
 func (h *CardsHandler) startAgentForCard(ctx context.Context, userID, cardID uuid.UUID) error {
-	lc, err := h.resolveLifecycle(ctx, userID)
+	repoID, err := h.repoForCard(ctx, userID, cardID)
+	if err != nil {
+		return err
+	}
+	lc, err := h.resolveLifecycle(ctx, userID, repoID)
 	if err != nil {
 		return err
 	}
@@ -408,11 +490,15 @@ func (h *CardsHandler) startAgentForCard(ctx context.Context, userID, cardID uui
 	return nil
 }
 
-// stopAgent cancels a running agent for cardID. With the registry the
-// lookup hits the same manager instance that StartAgent used, so
-// cancellation actually reaches the running goroutine.
+// stopAgent cancels a running agent for cardID. The lookup uses the
+// card's own repo_id so we hit the same manager instance StartAgent
+// used.
 func (h *CardsHandler) stopAgent(ctx context.Context, userID, cardID uuid.UUID) error {
-	lc, err := h.resolveLifecycle(ctx, userID)
+	repoID, err := h.repoForCard(ctx, userID, cardID)
+	if err != nil {
+		return err
+	}
+	lc, err := h.resolveLifecycle(ctx, userID, repoID)
 	if err != nil {
 		return err
 	}
@@ -443,22 +529,37 @@ func (h *CardsHandler) diff(c *fiber.Ctx) error {
 	if card.WorktreeBranch == nil || strings.TrimSpace(*card.WorktreeBranch) == "" {
 		return c.JSON(fiber.Map{"diff": "", "branch": nil, "base": "main"})
 	}
-	if h.settings == nil {
-		return apperrors.Handle(c, apperrors.New(http.StatusServiceUnavailable, "board settings not configured"))
+	// Resolve the repo for the card so we look up the correct local
+	// checkout when the user has multiple boards. Falls back to the
+	// user's default repo for legacy cards with no repo_id.
+	repoPath := ""
+	base := "main"
+	if card.RepoID != uuid.Nil && h.repos != nil {
+		repo, err := h.repos.Get(c.UserContext(), userID, card.RepoID)
+		if err == nil {
+			repoPath = repo.RepoPath
+			if repo.DefaultBranch != "" {
+				base = repo.DefaultBranch
+			}
+		}
 	}
-	st, err := h.settings.Get(c.UserContext(), userID)
-	if err != nil {
-		return apperrors.Handle(c, err)
+	if repoPath == "" && h.settings != nil {
+		// Backwards compat — Settings still carries the legacy
+		// single-repo path until the next wave drops it.
+		st, err := h.settings.Get(c.UserContext(), userID)
+		if err != nil {
+			return apperrors.Handle(c, err)
+		}
+		repoPath = strings.TrimSpace(st.RepoPath)
 	}
-	if strings.TrimSpace(st.RepoPath) == "" {
+	if repoPath == "" {
 		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "board settings incomplete: repo_path is required"))
 	}
 
 	branch := *card.WorktreeBranch
-	base := "main"
 	ctx, cancel := context.WithTimeout(c.UserContext(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", st.RepoPath, "diff", base+"..."+branch)
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "diff", base+"..."+branch)
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return c.JSON(fiber.Map{

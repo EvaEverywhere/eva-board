@@ -82,12 +82,13 @@ func (f *fakeCardStore) Moves() []fakeMove {
 	return out
 }
 
-func (f *fakeCardStore) Create(ctx context.Context, userID uuid.UUID, req CreateRequest) (*Card, error) {
+func (f *fakeCardStore) Create(ctx context.Context, userID, repoID uuid.UUID, req CreateRequest) (*Card, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := &Card{
 		ID:          uuid.New(),
 		UserID:      userID,
+		RepoID:      repoID,
 		Title:       strings.TrimSpace(req.Title),
 		Description: strings.TrimSpace(req.Description),
 		Column:      ColumnBacklog,
@@ -139,12 +140,18 @@ func (f *fakeCardStore) GetByPRNumber(ctx context.Context, prNumber int) (*Card,
 	return nil, ErrCardNotFound
 }
 
-func (f *fakeCardStore) List(ctx context.Context, userID uuid.UUID, column string) ([]Card, error) {
+func (f *fakeCardStore) List(ctx context.Context, userID, repoID uuid.UUID, column string) ([]Card, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := []Card{}
 	for _, c := range f.cards {
 		if c.UserID != userID {
+			continue
+		}
+		// repoID == Nil means "do not filter" so existing tests that
+		// don't care about repo scoping still work. Production calls
+		// always pass a real repo id.
+		if repoID != uuid.Nil && c.RepoID != repoID {
 			continue
 		}
 		if column != "" && c.Column != column {
@@ -432,6 +439,11 @@ func (f *fakeAgentGitHub) CloseIssue(ctx context.Context, owner, repo string, nu
 }
 func (f *fakeAgentGitHub) GetUser(ctx context.Context) (*github.User, error) {
 	return &github.User{Login: "agent"}, nil
+}
+func (f *fakeAgentGitHub) GetRepo(ctx context.Context, owner, name string) (*github.Repo, error) {
+	r := &github.Repo{Name: name, FullName: owner + "/" + name, DefaultBranch: "main"}
+	r.Owner.Login = owner
+	return r, nil
 }
 func (f *fakeAgentGitHub) ListUserRepos(ctx context.Context, opts github.ListUserReposOptions) ([]github.Repo, error) {
 	return nil, nil

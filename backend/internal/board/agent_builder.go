@@ -23,11 +23,12 @@ import (
 // reused when the user has not changed any codegen field, avoiding a
 // fresh process per request for the common case.
 type AgentBuilderDeps struct {
-	Cards          cardStore
-	Settings       *SettingsService
-	GitHubClient   github.ClientFactory
+	Cards           cardStore
+	Repos           *ReposService
+	Settings        *SettingsService
+	GitHubClient    github.ClientFactory
 	CodegenDefaults codegen.Config
-	SharedCodegen  codegen.Agent
+	SharedCodegen   codegen.Agent
 	// CodegenFactory builds a fresh codegen.Agent when per-user
 	// overrides differ from the defaults. Defaults to codegen.NewAgent
 	// when nil.
@@ -48,16 +49,20 @@ func NewProductionManagerBuilder(deps AgentBuilderDeps) ManagerBuilder {
 	if deps.CodegenFactory == nil {
 		deps.CodegenFactory = codegen.NewAgent
 	}
-	return func(ctx context.Context, userID uuid.UUID) (*AgentManager, string, error) {
-		if deps.Settings == nil || deps.GitHubClient == nil || deps.Cards == nil {
+	return func(ctx context.Context, userID, repoID uuid.UUID) (*AgentManager, string, error) {
+		if deps.Settings == nil || deps.GitHubClient == nil || deps.Cards == nil || deps.Repos == nil {
 			return nil, "", apperrors.New(http.StatusServiceUnavailable, "board agent is not configured on this server")
+		}
+		repo, err := deps.Repos.Get(ctx, userID, repoID)
+		if err != nil {
+			return nil, "", apperrors.New(http.StatusBadRequest, "board repo not found for user")
+		}
+		if repo.Owner == "" || repo.Name == "" || repo.RepoPath == "" {
+			return nil, "", apperrors.New(http.StatusBadRequest, "board repo incomplete: owner, name, and repo_path are required")
 		}
 		st, err := deps.Settings.Get(ctx, userID)
 		if err != nil {
 			return nil, "", err
-		}
-		if st.GitHubOwner == "" || st.GitHubRepo == "" || st.RepoPath == "" {
-			return nil, "", apperrors.New(http.StatusBadRequest, "board settings incomplete: github_owner, github_repo, and repo_path are required")
 		}
 		token, err := deps.Settings.GitHubToken(ctx, userID)
 		if err != nil {
@@ -68,16 +73,21 @@ func NewProductionManagerBuilder(deps AgentBuilderDeps) ManagerBuilder {
 			return nil, "", apperrors.New(http.StatusBadRequest, "invalid codegen configuration: "+err.Error())
 		}
 		gh := deps.GitHubClient.NewClient(token)
+		baseBranch := repo.DefaultBranch
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
 		cfg := AgentConfig{
-			RepoOwner:           st.GitHubOwner,
-			RepoName:            st.GitHubRepo,
-			RepoPath:            st.RepoPath,
+			RepoOwner:           repo.Owner,
+			RepoName:            repo.Name,
+			RepoPath:            repo.RepoPath,
+			BaseBranch:          baseBranch,
 			MaxVerifyIterations: st.MaxVerifyIterations,
 			MaxReviewCycles:     st.MaxReviewCycles,
 			GitHubToken:         token,
 		}
 		mgr := NewAgentManager(deps.Cards, code, gh, cfg)
-		sig := managerSignature(st, codeCfg)
+		sig := managerSignature(repo, st, codeCfg)
 		return mgr, sig, nil
 	}
 }
@@ -135,12 +145,14 @@ func codegenConfigEqual(a, b codegen.Config) bool {
 
 // managerSignature returns a stable hash of the inputs that affect
 // AgentManager construction. The GitHub token is intentionally NOT
-// included.
-func managerSignature(st Settings, code codegen.Config) string {
+// included so a token rotation does not invalidate a running agent.
+func managerSignature(repo *Repo, st Settings, code codegen.Config) string {
 	parts := []string{
-		st.GitHubOwner,
-		st.GitHubRepo,
-		st.RepoPath,
+		repo.ID.String(),
+		repo.Owner,
+		repo.Name,
+		repo.RepoPath,
+		repo.DefaultBranch,
 		strconv.Itoa(st.MaxVerifyIterations),
 		strconv.Itoa(st.MaxReviewCycles),
 		code.Type,

@@ -18,8 +18,8 @@ func TestTriageService_ApplyProposals_OnlyAppliesPassedSubset(t *testing.T) {
 
 	// Seed three cards: one to keep, one to close, one to rewrite.
 	keep := makeBacklogCard(store, userID)
-	toClose, _ := store.Create(context.Background(), userID, CreateRequest{Title: "stale"})
-	toRewrite, _ := store.Create(context.Background(), userID, CreateRequest{Title: "vague"})
+	toClose, _ := store.Create(context.Background(), userID, uuid.Nil, CreateRequest{Title: "stale"})
+	toRewrite, _ := store.Create(context.Background(), userID, uuid.Nil, CreateRequest{Title: "vague"})
 
 	// Analyzer "produced" three proposals; user approves only two
 	// (close + rewrite). The create proposal in `denied` must NOT be
@@ -54,7 +54,7 @@ func TestTriageService_ApplyProposals_OnlyAppliesPassedSubset(t *testing.T) {
 		t.Errorf("untouched card was mutated: %+v", got)
 	}
 	// Denied create must NOT have produced a card.
-	all, _ := store.List(context.Background(), userID, "")
+	all, _ := store.List(context.Background(), userID, uuid.Nil, "")
 	for _, c := range all {
 		if c.Title == denied[0].Title {
 			t.Errorf("denied create proposal was applied: %+v", c)
@@ -132,7 +132,7 @@ func TestTriageService_ApplyProposals_EmptyIsNoop(t *testing.T) {
 	if err := svc.ApplyProposals(context.Background(), userID, nil); err != nil {
 		t.Fatalf("expected nil error for empty slice, got %v", err)
 	}
-	all, _ := store.List(context.Background(), userID, "")
+	all, _ := store.List(context.Background(), userID, uuid.Nil, "")
 	if len(all) != 1 {
 		t.Errorf("apply with empty slice altered card set: %d cards", len(all))
 	}

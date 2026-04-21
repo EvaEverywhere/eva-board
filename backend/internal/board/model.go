@@ -37,6 +37,7 @@ var AgentStatuses = []string{
 type Card struct {
 	ID             uuid.UUID
 	UserID         uuid.UUID
+	RepoID         uuid.UUID
 	Title          string
 	Description    string
 	Column         string

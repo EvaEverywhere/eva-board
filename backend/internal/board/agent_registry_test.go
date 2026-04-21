@@ -23,7 +23,7 @@ type fakeBuilder struct {
 	delay     time.Duration
 }
 
-func (f *fakeBuilder) build(_ context.Context, userID uuid.UUID) (*AgentManager, string, error) {
+func (f *fakeBuilder) build(_ context.Context, userID, repoID uuid.UUID) (*AgentManager, string, error) {
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -38,7 +38,7 @@ func (f *fakeBuilder) build(_ context.Context, userID uuid.UUID) (*AgentManager,
 	if f.signature != nil {
 		sig = f.signature(userID, n)
 	}
-	mgr := NewAgentManager(nil, nil, nil, AgentConfig{RepoPath: userID.String()})
+	mgr := NewAgentManager(nil, nil, nil, AgentConfig{RepoPath: userID.String() + ":" + repoID.String()})
 	return mgr, sig, nil
 }
 
@@ -48,13 +48,14 @@ func TestAgentRegistry_CachesPerUser(t *testing.T) {
 	fb := &fakeBuilder{}
 	r := NewAgentRegistry(fb.build)
 	uid := uuid.New()
+	rid := uuid.New()
 	ctx := context.Background()
 
-	first, err := r.For(ctx, uid)
+	first, err := r.For(ctx, uid, rid)
 	if err != nil {
 		t.Fatalf("first For: %v", err)
 	}
-	second, err := r.For(ctx, uid)
+	second, err := r.For(ctx, uid, rid)
 	if err != nil {
 		t.Fatalf("second For: %v", err)
 	}
@@ -79,13 +80,14 @@ func TestAgentRegistry_RebuildsOnSignatureChange(t *testing.T) {
 	}
 	r := NewAgentRegistry(fb.build)
 	uid := uuid.New()
+	rid := uuid.New()
 	ctx := context.Background()
 
-	first, err := r.For(ctx, uid)
+	first, err := r.For(ctx, uid, rid)
 	if err != nil {
 		t.Fatalf("first For: %v", err)
 	}
-	second, err := r.For(ctx, uid)
+	second, err := r.For(ctx, uid, rid)
 	if err != nil {
 		t.Fatalf("second For: %v", err)
 	}
@@ -101,11 +103,11 @@ func TestAgentRegistry_DifferentUsers(t *testing.T) {
 	r := NewAgentRegistry(fb.build)
 	ctx := context.Background()
 
-	a, err := r.For(ctx, uuid.New())
+	a, err := r.For(ctx, uuid.New(), uuid.New())
 	if err != nil {
 		t.Fatalf("user a: %v", err)
 	}
-	b, err := r.For(ctx, uuid.New())
+	b, err := r.For(ctx, uuid.New(), uuid.New())
 	if err != nil {
 		t.Fatalf("user b: %v", err)
 	}
@@ -122,9 +124,10 @@ func TestAgentRegistry_Forget(t *testing.T) {
 	fb := &fakeBuilder{}
 	r := NewAgentRegistry(fb.build)
 	uid := uuid.New()
+	rid := uuid.New()
 	ctx := context.Background()
 
-	first, err := r.For(ctx, uid)
+	first, err := r.For(ctx, uid, rid)
 	if err != nil {
 		t.Fatalf("first For: %v", err)
 	}
@@ -132,12 +135,71 @@ func TestAgentRegistry_Forget(t *testing.T) {
 	if got := r.Snapshot(); len(got) != 0 {
 		t.Fatalf("snapshot after forget = %v, want empty", got)
 	}
-	second, err := r.For(ctx, uid)
+	second, err := r.For(ctx, uid, rid)
 	if err != nil {
 		t.Fatalf("second For: %v", err)
 	}
 	if first == second {
 		t.Fatalf("expected fresh manager after Forget; got cached %p", first)
+	}
+}
+
+// TestAgentRegistry_DifferentReposSameUser verifies the cache key
+// includes repoID so two boards owned by the same user get distinct
+// AgentManagers and a Stop on board A does not affect board B.
+func TestAgentRegistry_DifferentReposSameUser(t *testing.T) {
+	fb := &fakeBuilder{
+		signature: func(_ uuid.UUID, n int) string {
+			// Distinct sigs per call → registry treats them as
+			// different even if it didn't key on repoID; we want
+			// to also assert the cache holds both entries.
+			return "sig" + string(rune('0'+n))
+		},
+	}
+	r := NewAgentRegistry(fb.build)
+	uid := uuid.New()
+	repoA := uuid.New()
+	repoB := uuid.New()
+	ctx := context.Background()
+
+	a, err := r.For(ctx, uid, repoA)
+	if err != nil {
+		t.Fatalf("repo A: %v", err)
+	}
+	b, err := r.For(ctx, uid, repoB)
+	if err != nil {
+		t.Fatalf("repo B: %v", err)
+	}
+	if a == b {
+		t.Fatalf("same user different repos must get distinct managers")
+	}
+	if got := r.Snapshot(); len(got) != 2 {
+		t.Fatalf("snapshot size = %d, want 2 (one per repo)", len(got))
+	}
+}
+
+// TestAgentRegistry_ForgetRepo evicts only one (user, repo) entry.
+func TestAgentRegistry_ForgetRepo(t *testing.T) {
+	fb := &fakeBuilder{}
+	r := NewAgentRegistry(fb.build)
+	uid := uuid.New()
+	repoA := uuid.New()
+	repoB := uuid.New()
+	ctx := context.Background()
+
+	if _, err := r.For(ctx, uid, repoA); err != nil {
+		t.Fatalf("repo A: %v", err)
+	}
+	if _, err := r.For(ctx, uid, repoB); err != nil {
+		t.Fatalf("repo B: %v", err)
+	}
+	r.ForgetRepo(uid, repoA)
+	got := r.Snapshot()
+	if len(got) != 1 {
+		t.Fatalf("snapshot after ForgetRepo size = %d, want 1", len(got))
+	}
+	if got[0].RepoID != repoB {
+		t.Fatalf("expected repo B to remain, got %v", got[0])
 	}
 }
 
@@ -148,6 +210,7 @@ func TestAgentRegistry_Concurrent(t *testing.T) {
 	fb := &fakeBuilder{delay: 50 * time.Millisecond}
 	r := NewAgentRegistry(fb.build)
 	uid := uuid.New()
+	rid := uuid.New()
 	ctx := context.Background()
 
 	const N = 16
@@ -158,7 +221,7 @@ func TestAgentRegistry_Concurrent(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			results[idx], errs[idx] = r.For(ctx, uid)
+			results[idx], errs[idx] = r.For(ctx, uid, rid)
 		}(i)
 	}
 	wg.Wait()
@@ -182,7 +245,7 @@ func TestAgentRegistry_BuilderError(t *testing.T) {
 	want := errors.New("boom")
 	fb := &fakeBuilder{err: want}
 	r := NewAgentRegistry(fb.build)
-	if _, err := r.For(context.Background(), uuid.New()); !errors.Is(err, want) {
+	if _, err := r.For(context.Background(), uuid.New(), uuid.New()); !errors.Is(err, want) {
 		t.Fatalf("err = %v, want %v", err, want)
 	}
 }

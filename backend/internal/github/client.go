@@ -28,6 +28,7 @@ type Client interface {
 	ListIssues(ctx context.Context, owner, repo string, opts ListIssuesOptions) ([]Issue, error)
 	CloseIssue(ctx context.Context, owner, repo string, number int) error
 	GetUser(ctx context.Context) (*User, error)
+	GetRepo(ctx context.Context, owner, name string) (*Repo, error)
 	ListUserRepos(ctx context.Context, opts ListUserReposOptions) ([]Repo, error)
 }
 

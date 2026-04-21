@@ -12,11 +12,11 @@ import (
 // production code path still uses *Service unchanged. *Service
 // satisfies cardStore by virtue of implementing every method below.
 type cardStore interface {
-	Create(ctx context.Context, userID uuid.UUID, req CreateRequest) (*Card, error)
+	Create(ctx context.Context, userID, repoID uuid.UUID, req CreateRequest) (*Card, error)
 	Get(ctx context.Context, userID, cardID uuid.UUID) (*Card, error)
 	GetByID(ctx context.Context, cardID uuid.UUID) (*Card, error)
 	GetByPRNumber(ctx context.Context, prNumber int) (*Card, error)
-	List(ctx context.Context, userID uuid.UUID, column string) ([]Card, error)
+	List(ctx context.Context, userID, repoID uuid.UUID, column string) ([]Card, error)
 	Update(ctx context.Context, userID, cardID uuid.UUID, req UpdateRequest) (*Card, error)
 	Move(ctx context.Context, userID, cardID uuid.UUID, toColumn string, toPosition int) (*Card, error)
 	Delete(ctx context.Context, userID, cardID uuid.UUID) error
