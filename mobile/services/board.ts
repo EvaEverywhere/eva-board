@@ -101,6 +101,21 @@ export async function sendAgentFeedback(
   );
 }
 
+// ---------- Diff ----------
+
+export type CardDiff = {
+  diff: string;
+  branch: string | null;
+  base: string;
+  error?: string;
+};
+
+export async function getCardDiff(cardId: string): Promise<CardDiff> {
+  return request<CardDiff>(
+    `/api/board/cards/${encodeURIComponent(cardId)}/diff`,
+  );
+}
+
 // ---------- Settings ----------
 
 export async function getBoardSettings(): Promise<BoardSettings> {
