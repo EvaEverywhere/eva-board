@@ -8,9 +8,12 @@ sidebar_position: 1
 
 **Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop.**
 
-Tools like Vibe Kanban make humans faster at reviewing agent work. Eva Board
-removes humans from the loop entirely. The agent verifies against acceptance
-criteria, self-reviews its own diff, retries on failure, and creates the PR.
+> 🍎 macOS · 📱 iOS · 🤖 Android · 🌐 Web · 🐳 Docker · ☁️ Self-hosted
+
+You create a card with acceptance criteria. The agent writes the code, scores
+itself against every criterion, then a second session reviews the diff with
+fresh context. Failed a check? It retries automatically. Passed both? A PR is
+opened on GitHub — no human required between "Start" and the pull request.
 
 ## How it works
 
