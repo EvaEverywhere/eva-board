@@ -250,6 +250,18 @@ func (f *fakeCardStore) SetPR(ctx context.Context, cardID uuid.UUID, number int,
 	return nil
 }
 
+func (f *fakeCardStore) SetGitHubIssue(ctx context.Context, cardID uuid.UUID, number int, url string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.cards[cardID]
+	if !ok {
+		return ErrCardNotFound
+	}
+	c.GitHubIssueNumber = &number
+	c.GitHubIssueURL = &url
+	return nil
+}
+
 func (f *fakeCardStore) SetReviewStatus(ctx context.Context, cardID uuid.UUID, status string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

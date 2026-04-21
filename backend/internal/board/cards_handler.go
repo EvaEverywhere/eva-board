@@ -20,6 +20,8 @@ package board
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
+	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 
 // AgentLifecycle is the slice of AgentManager that CardsHandler relies
@@ -47,28 +50,47 @@ type AgentLifecycle interface {
 // AgentRegistry on the handler.
 type AgentLifecycleFactory func(ctx context.Context, userID, repoID uuid.UUID) (AgentLifecycle, error)
 
+// IssueCreator is the seam used by the create handler to optionally
+// push a freshly-created card to GitHub as an issue. Returning
+// (nil, nil) means "configured but nothing to do" (e.g. user has no
+// GitHub token stored) — the create handler treats it as a silent
+// skip rather than an error. A non-nil error is logged but never
+// fails the create response: the card is already saved at that point.
+type IssueCreator func(ctx context.Context, userID, repoID uuid.UUID, card *Card) (*github.Issue, error)
+
 // CardsHandler exposes board card CRUD, move, and agent-lifecycle
 // routes.
 type CardsHandler struct {
-	cards    cardStore
-	settings *SettingsService
-	repos    *ReposService
-	registry *AgentRegistry
-	broker   *Broker
-	draft    *DraftService
+	cards     cardStore
+	settings  *SettingsService
+	repos     *ReposService
+	registry  *AgentRegistry
+	broker    *Broker
+	draft     *DraftService
+	ghFactory github.ClientFactory
 
 	// agentFactory is set by tests via SetAgentFactory to substitute
 	// the registry-backed lifecycle resolution. nil means use the
 	// registry path.
 	agentFactory AgentLifecycleFactory
+
+	// issueCreator pushes the card as a GitHub issue on create. Built
+	// from settings + repos + ghFactory in NewCardsHandler when all
+	// three are present; tests inject a recording version via
+	// SetIssueCreator. nil here disables the issue-push path
+	// regardless of the request flag — the card is still created.
+	issueCreator IssueCreator
 }
 
-// NewCardsHandler builds a CardsHandler. broker, registry, repos and
-// draft may be nil in test binaries that don't exercise the
-// corresponding surfaces; agent routes surface a 503 when registry is
-// nil, the draft route surfaces a 503 when draft is nil, and
-// list/create surface a 400 when repos is nil and no ?repo_id is
-// supplied.
+// NewCardsHandler builds a CardsHandler. broker, registry, repos,
+// draft, and ghFactory may be nil in test binaries that don't
+// exercise the corresponding surfaces; agent routes surface a 503
+// when registry is nil, the draft route surfaces a 503 when draft is
+// nil, and list/create surface a 400 when repos is nil and no
+// ?repo_id is supplied. When settings, repos, and ghFactory are all
+// non-nil, create-card flows can push the card to GitHub as an issue
+// (opt-out via the request body); any of them being nil disables that
+// step silently — the card is still created.
 func NewCardsHandler(
 	cards cardStore,
 	settings *SettingsService,
@@ -76,15 +98,53 @@ func NewCardsHandler(
 	registry *AgentRegistry,
 	broker *Broker,
 	draft *DraftService,
+	ghFactory github.ClientFactory,
 ) *CardsHandler {
-	return &CardsHandler{
-		cards:    cards,
-		settings: settings,
-		repos:    repos,
-		registry: registry,
-		broker:   broker,
-		draft:    draft,
+	h := &CardsHandler{
+		cards:     cards,
+		settings:  settings,
+		repos:     repos,
+		registry:  registry,
+		broker:    broker,
+		draft:     draft,
+		ghFactory: ghFactory,
 	}
+	// Build the production issue creator when every dep is wired. We
+	// capture (settings, repos, ghFactory) in a closure so the create
+	// handler stays readable and tests can swap the whole behaviour
+	// via SetIssueCreator without juggling the underlying services.
+	if settings != nil && repos != nil && ghFactory != nil {
+		h.issueCreator = func(ctx context.Context, userID, repoID uuid.UUID, card *Card) (*github.Issue, error) {
+			repo, err := repos.Get(ctx, userID, repoID)
+			if err != nil {
+				return nil, fmt.Errorf("get repo: %w", err)
+			}
+			token, err := settings.GitHubToken(ctx, userID)
+			if err != nil {
+				if errors.Is(err, ErrNoGitHubToken) {
+					return nil, nil
+				}
+				return nil, fmt.Errorf("get github token: %w", err)
+			}
+			if strings.TrimSpace(token) == "" {
+				return nil, nil
+			}
+			return ghFactory.NewClient(token).CreateIssue(ctx, repo.Owner, repo.Name, github.CreateIssueRequest{
+				Title:  card.Title,
+				Body:   card.Description,
+				Labels: []string{"eva-board"},
+			})
+		}
+	}
+	return h
+}
+
+// SetIssueCreator replaces the production issue-creator closure with
+// a test-supplied one. Intended for the cards-handler tests that want
+// to assert the create flow's interaction with GitHub without wiring
+// a real settings + repos + ghFactory stack.
+func (h *CardsHandler) SetIssueCreator(f IssueCreator) {
+	h.issueCreator = f
 }
 
 // Register mounts the card routes onto r. The caller is responsible for
@@ -110,21 +170,23 @@ func (h *CardsHandler) Register(r fiber.Router) {
 // tags to the domain Card struct because it doubles as the internal
 // shared model and we want the wire shape to be controlled here.
 type cardView struct {
-	ID             string         `json:"id"`
-	UserID         string         `json:"user_id"`
-	RepoID         string         `json:"repo_id,omitempty"`
-	Title          string         `json:"title"`
-	Description    string         `json:"description"`
-	Column         string         `json:"column"`
-	Position       int            `json:"position"`
-	AgentStatus    string         `json:"agent_status"`
-	WorktreeBranch *string        `json:"worktree_branch,omitempty"`
-	PRNumber       *int           `json:"pr_number,omitempty"`
-	PRURL          *string        `json:"pr_url,omitempty"`
-	ReviewStatus   *string        `json:"review_status,omitempty"`
-	Metadata       map[string]any `json:"metadata"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID                string         `json:"id"`
+	UserID            string         `json:"user_id"`
+	RepoID            string         `json:"repo_id,omitempty"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description"`
+	Column            string         `json:"column"`
+	Position          int            `json:"position"`
+	AgentStatus       string         `json:"agent_status"`
+	WorktreeBranch    *string        `json:"worktree_branch,omitempty"`
+	PRNumber          *int           `json:"pr_number,omitempty"`
+	PRURL             *string        `json:"pr_url,omitempty"`
+	ReviewStatus      *string        `json:"review_status,omitempty"`
+	GitHubIssueNumber *int           `json:"github_issue_number,omitempty"`
+	GitHubIssueURL    *string        `json:"github_issue_url,omitempty"`
+	Metadata          map[string]any `json:"metadata"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 func toCardView(c *Card) cardView {
@@ -132,20 +194,22 @@ func toCardView(c *Card) cardView {
 		return cardView{}
 	}
 	view := cardView{
-		ID:             c.ID.String(),
-		UserID:         c.UserID.String(),
-		Title:          c.Title,
-		Description:    c.Description,
-		Column:         c.Column,
-		Position:       c.Position,
-		AgentStatus:    c.AgentStatus,
-		WorktreeBranch: c.WorktreeBranch,
-		PRNumber:       c.PRNumber,
-		PRURL:          c.PRURL,
-		ReviewStatus:   c.ReviewStatus,
-		Metadata:       c.Metadata,
-		CreatedAt:      c.CreatedAt,
-		UpdatedAt:      c.UpdatedAt,
+		ID:                c.ID.String(),
+		UserID:            c.UserID.String(),
+		Title:             c.Title,
+		Description:       c.Description,
+		Column:            c.Column,
+		Position:          c.Position,
+		AgentStatus:       c.AgentStatus,
+		WorktreeBranch:    c.WorktreeBranch,
+		PRNumber:          c.PRNumber,
+		PRURL:             c.PRURL,
+		ReviewStatus:      c.ReviewStatus,
+		GitHubIssueNumber: c.GitHubIssueNumber,
+		GitHubIssueURL:    c.GitHubIssueURL,
+		Metadata:          c.Metadata,
+		CreatedAt:         c.CreatedAt,
+		UpdatedAt:         c.UpdatedAt,
 	}
 	if c.RepoID != uuid.Nil {
 		view.RepoID = c.RepoID.String()
@@ -164,6 +228,12 @@ func toCardViews(cs []Card) []cardView {
 type createCardBody struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	// CreateIssue, when true (and the user has a connected GitHub
+	// repo + token), pushes the card to GitHub as an issue after
+	// insertion. Defaults to true when not provided — if the user
+	// connected GitHub at all, they almost certainly want the issue
+	// pushed. Set explicitly false to opt out per request.
+	CreateIssue *bool `json:"create_issue,omitempty"`
 }
 
 type draftCardBody struct {
@@ -223,6 +293,25 @@ func (h *CardsHandler) create(c *fiber.Ctx) error {
 	if err != nil {
 		return apperrors.Handle(c, mapCardError(err))
 	}
+
+	// Default-on: if the caller didn't say create_issue=false, try
+	// to push the card as a GitHub issue. Failures here are logged
+	// and swallowed — the card is already created, so we'd rather
+	// return 201 with a partial response than make the user re-type
+	// their card because GitHub was flaky.
+	createIssue := body.CreateIssue == nil || *body.CreateIssue
+	if createIssue && h.issueCreator != nil {
+		if issue, err := h.issueCreator(c.UserContext(), userID, repoID, card); err != nil {
+			log.Printf("[board-cards] card %s: github issue push failed: %v", card.ID, err)
+		} else if issue != nil {
+			if err := h.cards.SetGitHubIssue(c.UserContext(), card.ID, issue.Number, issue.HTMLURL); err != nil {
+				log.Printf("[board-cards] card %s: persist github issue %d failed: %v", card.ID, issue.Number, err)
+			} else if updated, err := h.cards.Get(c.UserContext(), userID, card.ID); err == nil {
+				card = updated
+			}
+		}
+	}
+
 	return c.Status(http.StatusCreated).JSON(toCardView(card))
 }
 

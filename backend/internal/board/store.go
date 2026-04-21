@@ -23,6 +23,7 @@ type cardStore interface {
 	SetAgentStatus(ctx context.Context, cardID uuid.UUID, status string) error
 	SetWorktreeBranch(ctx context.Context, cardID uuid.UUID, branch string) error
 	SetPR(ctx context.Context, cardID uuid.UUID, number int, url string) error
+	SetGitHubIssue(ctx context.Context, cardID uuid.UUID, number int, url string) error
 	SetReviewStatus(ctx context.Context, cardID uuid.UUID, status string) error
 	SetMetadata(ctx context.Context, cardID uuid.UUID, key string, value any) error
 }

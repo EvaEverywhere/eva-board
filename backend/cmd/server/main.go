@@ -109,7 +109,7 @@ func main() {
 	// instance at startup.
 	draftSvc := board.NewDraftService(reposSvc, codegenAgent)
 	cardsHandler := board.NewCardsHandler(
-		cardsSvc, settingsSvc, reposSvc, agentRegistry, boardBroker, draftSvc,
+		cardsSvc, settingsSvc, reposSvc, agentRegistry, boardBroker, draftSvc, ghFactory,
 	)
 	curateHandler := board.NewCurateHandler(
 		cardsSvc, settingsSvc, reposSvc, codegenAgent, ghFactory,

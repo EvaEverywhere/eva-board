@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -8,7 +9,16 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ExternalLink, Plus, Sparkles, Trash2, X } from "lucide-react-native";
+import {
+  CheckSquare,
+  ExternalLink,
+  Hash,
+  Plus,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react-native";
 
 import { CurateModal } from "@/components/CurateModal";
 import { RepoSwitcher } from "@/components/RepoSwitcher";
@@ -162,9 +172,12 @@ export default function BoardScreen() {
   );
 
   const handleCreateCard = useCallback(
-    async (title: string, description: string) => {
+    async (title: string, description: string, createIssue: boolean) => {
       if (!selectedRepo) return;
-      const created = await createCard({ title, description }, selectedRepo.id);
+      const created = await createCard(
+        { title, description, create_issue: createIssue },
+        selectedRepo.id,
+      );
       setCards((prev) => [...prev, created]);
     },
     [selectedRepo],
@@ -469,6 +482,15 @@ function BoardCardView({
   onLongPress: (card: BoardCard) => void;
 }) {
   const status = STATUS_COLORS[card.agent_status] ?? STATUS_COLORS.idle;
+
+  // openLink uses Linking on every platform — on react-native-web
+  // Linking.openURL forwards to window.open, so we don't need a
+  // platform branch. Errors are intentionally swallowed: the card
+  // press itself opens the detail view, this is just the badge tap.
+  const openLink = useCallback((url: string) => {
+    void Linking.openURL(url).catch(() => {});
+  }, []);
+
   return (
     <Pressable
       onPress={() => onOpen(card.id)}
@@ -498,14 +520,35 @@ function BoardCardView({
             {status.label}
           </Text>
         </View>
-        {card.pr_number ? (
-          <View className="flex-row items-center gap-1">
-            <ExternalLink size={12} color="#9AA4B2" />
-            <Text variant="small" className="text-muted">
-              #{card.pr_number}
-            </Text>
-          </View>
-        ) : null}
+        <View className="flex-row items-center gap-2">
+          {card.github_issue_number ? (
+            <Pressable
+              onPress={(e) => {
+                // Stop the parent Pressable from firing onOpen when
+                // the user taps the badge — they want the issue, not
+                // the card detail view.
+                e.stopPropagation();
+                if (card.github_issue_url) openLink(card.github_issue_url);
+              }}
+              accessibilityRole="link"
+              accessibilityLabel={`Open GitHub issue #${card.github_issue_number}`}
+              className="flex-row items-center gap-1"
+            >
+              <Hash size={12} color="#9AA4B2" />
+              <Text variant="small" className="text-muted">
+                {card.github_issue_number}
+              </Text>
+            </Pressable>
+          ) : null}
+          {card.pr_number ? (
+            <View className="flex-row items-center gap-1">
+              <ExternalLink size={12} color="#9AA4B2" />
+              <Text variant="small" className="text-muted">
+                #{card.pr_number}
+              </Text>
+            </View>
+          ) : null}
+        </View>
       </View>
     </Pressable>
   );
@@ -514,7 +557,11 @@ function BoardCardView({
 type NewCardModalProps = {
   visible: boolean;
   onClose: () => void;
-  onCreate: (title: string, description: string) => Promise<void>;
+  onCreate: (
+    title: string,
+    description: string,
+    createIssue: boolean,
+  ) => Promise<void>;
   repoId?: string;
 };
 
@@ -554,6 +601,11 @@ function NewCardModal({ visible, onClose, onCreate, repoId }: NewCardModalProps)
   const [reasoning, setReasoning] = useState("");
   const [drafting, setDrafting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // pushToGithub defaults to true: if the user has connected GitHub at
+  // all, they almost certainly want their cards mirrored there. The
+  // backend silently skips when no token is stored, so checking-by-
+  // default is safe even on dev installs.
+  const [pushToGithub, setPushToGithub] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const reset = useCallback(() => {
@@ -565,6 +617,7 @@ function NewCardModal({ visible, onClose, onCreate, repoId }: NewCardModalProps)
     setError(null);
     setDrafting(false);
     setSubmitting(false);
+    setPushToGithub(true);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -605,7 +658,7 @@ function NewCardModal({ visible, onClose, onCreate, repoId }: NewCardModalProps)
     setSubmitting(true);
     setError(null);
     try {
-      await onCreate(title.trim(), description.trim());
+      await onCreate(title.trim(), description.trim(), pushToGithub);
       reset();
       onClose();
     } catch (err) {
@@ -623,7 +676,7 @@ function NewCardModal({ visible, onClose, onCreate, repoId }: NewCardModalProps)
     setSubmitting(true);
     setError(null);
     try {
-      await onCreate(title.trim(), composed);
+      await onCreate(title.trim(), composed, pushToGithub);
       reset();
       onClose();
     } catch (err) {
@@ -702,6 +755,22 @@ function NewCardModal({ visible, onClose, onCreate, repoId }: NewCardModalProps)
                 textAlignVertical: "top",
               }}
             />
+            <Pressable
+              onPress={() => setPushToGithub((v) => !v)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: pushToGithub }}
+              accessibilityLabel="Push to GitHub as issue"
+              className="flex-row items-center gap-2 rounded-lg border border-border bg-secondary/40 p-3 active:opacity-80"
+            >
+              {pushToGithub ? (
+                <CheckSquare size={18} color="#00D4AA" />
+              ) : (
+                <Square size={18} color="#9AA4B2" />
+              )}
+              <Text variant="small" className="flex-1">
+                Push to GitHub as issue
+              </Text>
+            </Pressable>
             {phase === "edit" ? (
               <View className="gap-2">
                 {reasoning ? (
