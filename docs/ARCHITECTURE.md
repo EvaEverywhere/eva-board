@@ -22,7 +22,9 @@ self-hosting guide.
               │                       ├──▶ Coding agent CLI ───┼──▶ git worktree ──▶ git push
               │                       │   (Claude Code, etc.)  │
               │                       │                        │
-              │                       ├──▶ LLM (OpenRouter)    │   verification + review
+              │                       ├──▶ Codegen agent       │   verification + review
+              │                       │   (Claude Code in repo │   (same CLI, separate prompts)
+              │                       │    worktree)           │
               │                       │                        │
               │                       └──▶ GitHub REST API     │   open PR
               │                                                │
@@ -224,8 +226,9 @@ per-account. Features that have been deliberately deferred:
 - **Background scheduler binary.** Triage and spring-clean run on demand
   via the curate handler. There is no separate `cmd/scheduler` cron
   process yet.
-- **Native mobile apps.** The Expo project targets web only in v1. iOS
-  and Android builds are not wired up.
+- **Native mobile apps.** Native iOS and Android via Expo + EAS. See
+  [`docs/PHONE_DEV_SETUP.md`](PHONE_DEV_SETUP.md) for the simulator +
+  device install path.
 - **Billing / metering.** No Stripe, no per-tenant LLM cost accounting.
 - **GDPR delete + export tooling.** `users` cascades to cards and
   settings, but there is no audited self-serve export/delete flow.

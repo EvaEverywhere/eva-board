@@ -5,6 +5,10 @@
 
 Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop.
 
+## Demo
+
+> 📺 **Demo recording coming soon** — for now, see the [autonomous loop walkthrough](#how-it-works) below or jump to [Quickstart](#quickstart).
+
 ## How it works
 
 Tools like Vibe Kanban make humans faster at reviewing agent work. Eva Board removes humans from the loop entirely. The agent verifies against acceptance criteria, self-reviews its own diff, retries on failure, and creates the PR.
@@ -54,7 +58,7 @@ make up
 | Frontend | Expo (web), React, NativeWind |
 | Auth | Email magic-link (passwordless) |
 | Agents | Pluggable: Claude Code, any CLI agent |
-| LLM | OpenRouter (verification + review) |
+| LLM / Reviewer | Codegen agent (Claude Code default; pluggable to Codex, Aider, OpenHands, Cline, or any CLI) |
 | CI | GitHub Actions |
 
 ## Mobile (iOS / Android)
@@ -68,7 +72,9 @@ The backend URL can be changed at runtime from **Settings → Backend** in the a
 - [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) — deploy with Docker Compose or a single binary, reverse proxy, backups, agent CLI setup, GitHub webhook setup.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview, the autonomous loop, package map, data model, SSE design, security model.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — development setup and PR conventions.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1 community guidelines.
 - [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — third-party dependency licenses redistributed with Eva Board.
 - [CLAUDE.md](CLAUDE.md) — repository tour for Claude Code and other coding agents.
 
 ## License

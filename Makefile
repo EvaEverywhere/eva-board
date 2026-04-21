@@ -157,4 +157,4 @@ phone-dev: ## Start Metro on LAN for installed dev client to connect
 	cd mobile && npx expo start --dev-client --host lan
 
 phone-tunnel: ## Expose local API via ngrok so the phone can reach it
-	ngrok http 8090
+	ngrok http 8080

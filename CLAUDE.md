@@ -20,13 +20,12 @@ mobile/                 Expo web app (React, NativeWind)
 
 Each domain follows: `handler.go` (HTTP) + `service.go` (logic) + `model.go` (types).
 
-Planned domains:
+Domains:
 - **board** — Card CRUD, column transitions (backlog → develop → review → pr → done)
 - **board/agent** — Autonomous agent loop: code → verify → review → retry → PR
 - **board/triage** — Backlog analysis, spring clean, curate
-- **codegen** — Pluggable coding agent CLI (Claude Code, generic CLI)
+- **codegen** — Pluggable coding agent CLI (Claude Code, generic CLI); also drives verification + review
 - **github** — GitHub API client (PRs, issues, webhooks)
-- **llm** — LLM client (OpenRouter) for verification + review
 - **auth** — Email magic-link + JWT (from template)
 
 ## The autonomous loop
@@ -45,7 +44,7 @@ Card → Develop → Agent codes → Verify ACs → Review diff → PR
 | Database | PostgreSQL 16 |
 | Frontend | Expo 55, React 19, NativeWind |
 | Auth | Email magic-link (HS256 JWT) |
-| LLM | OpenRouter |
+| LLM / Reviewer | Codegen agent (Claude Code default; pluggable to Codex, Aider, OpenHands, Cline, or any CLI) |
 | CI | GitHub Actions |
 
 ## Common commands

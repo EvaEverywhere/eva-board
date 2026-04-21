@@ -31,13 +31,13 @@ make sim-ios
 ```
 
 The simulator shares your Mac's loopback, so the app reaches
-`http://localhost:8090` directly — no LAN IP or ngrok needed.
+`http://localhost:8080` directly — no LAN IP or ngrok needed.
 
 To sign in without waiting for an email, issue a dev JWT against your
 local API and deep-link it into the simulator:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8090/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","name":"You"}' | jq -r .token)
 xcrun simctl openurl booted "eva-board://?token=$TOKEN"
@@ -65,7 +65,7 @@ board features work fine in Expo Go today.
 4. Start Metro pointed at the backend on your LAN IP:
    ```bash
    cd mobile
-   EXPO_PUBLIC_API_URL=http://<your-mac-lan-ip>:8090 npx expo start
+   EXPO_PUBLIC_API_URL=http://<your-mac-lan-ip>:8080 npx expo start
    ```
 5. Scan the QR code with Expo Go on your phone.
 6. Sign in via magic link — the email link will deep-link back into
@@ -148,10 +148,10 @@ override wins when set, and **Reset to default** clears it.
 Build-time:
 
 ```bash
-EXPO_PUBLIC_API_URL=http://<mac-lan-ip>:8090 make phone-dev
+EXPO_PUBLIC_API_URL=http://<mac-lan-ip>:8080 make phone-dev
 ```
 
-Or in the app: Settings → Backend → `http://<mac-lan-ip>:8090` → Save.
+Or in the app: Settings → Backend → `http://<mac-lan-ip>:8080` → Save.
 
 Phone must be on the same WiFi as your Mac. Watch out for "guest"
 networks that block client-to-client traffic.
