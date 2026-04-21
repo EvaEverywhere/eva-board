@@ -17,6 +17,8 @@ RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /bin/server /bin/server
 COPY --from=builder /bin/migrate /bin/migrate
 
+LABEL org.opencontainers.image.licenses=Apache-2.0
+
 EXPOSE 8080
 
 CMD ["/bin/server"]
