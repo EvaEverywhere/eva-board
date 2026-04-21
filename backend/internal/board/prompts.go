@@ -1,14 +1,18 @@
 package board
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 
 const maxFeedbackPromptChars = 6000
 
-// truncateForPrompt clips long feedback/diff blobs so the prompt does not blow
-// past sensible LLM context budgets.
+// truncateForPrompt clips long feedback blobs so the prompt does not blow
+// past sensible context budgets.
 func truncateForPrompt(s string, max int) string {
 	trimmed := strings.TrimSpace(s)
 	if max <= 0 || len(trimmed) <= max {
@@ -45,17 +49,22 @@ func buildAgentPrompt(card Card, feedback string) string {
 	return b.String()
 }
 
-// buildVerifyPrompt asks the LLM to score the diff against acceptance criteria
-// and return a strict JSON verdict per criterion.
-func buildVerifyPrompt(card Card, criteria []string, diff string) string {
-	diff = truncateForPrompt(diff, 20000)
-
+// buildVerifyPrompt frames Claude as a REVIEWER (not the implementer)
+// scoring acceptance criteria against the worktree it is running inside.
+// The prompt deliberately encourages the agent to read source files
+// directly rather than relying on a diff blob — that's the whole reason
+// we run the reviewer in the worktree.
+func buildVerifyPrompt(card Card, criteria []string) string {
 	var criteriaList strings.Builder
 	for i, c := range criteria {
 		fmt.Fprintf(&criteriaList, "%d. %s\n", i+1, c)
 	}
 
-	return fmt.Sprintf(`You are a senior code reviewer verifying acceptance criteria.
+	return fmt.Sprintf(`You are a senior code reviewer verifying acceptance criteria for a feature you did NOT write.
+
+You are running inside the git worktree containing the candidate change. You have full access
+to the repository: read source files, follow imports, run %s, inspect commit history.
+Use that context. Do NOT rely on a diff blob alone.
 
 ## Issue: %s
 
@@ -65,59 +74,181 @@ func buildVerifyPrompt(card Card, criteria []string, diff string) string {
 ## Acceptance Criteria
 %s
 
-## Code Diff
-`+"```diff\n%s\n```"+`
+## What to do
+1. Inspect the worktree to understand what changed. Useful commands:
+   - %s to list changed files vs main
+   - %s to read individual files (preferred over a diff blob)
+   - %s to see the full diff if needed
+2. For EACH acceptance criterion above, decide whether the implementation in this worktree
+   satisfies it. Be strict: missing tests, partial implementations, or broken edge cases
+   are NOT met.
+3. Briefly explain your reasoning per criterion (one sentence).
 
-For EACH acceptance criterion above, determine if the code changes satisfy it.
-Output ONLY a JSON object with this exact structure:
+## Output
+Respond with ONLY a JSON object — no prose, no markdown fences. Shape:
+
 {
-  "verdicts": [
-    {"criterion": "the criterion text", "met": true|false, "reason": "brief explanation"}
+  "results": [
+    {"criterion": "<exact criterion text>", "met": true|false, "reason": "<short explanation>"}
   ],
-  "summary": "Overall assessment of what was built and any gaps."
+  "summary": "<one or two sentences on what was built and any gaps>"
 }
 
 Rules:
-- "met": true means the criterion is fully satisfied by the diff
-- "met": false means it is missing, broken, or only partially addressed
-- Be strict — if the diff doesn't clearly implement a criterion, mark it false
-- Output valid JSON only, no markdown fences`,
-		card.Title, card.Description, criteriaList.String(), diff)
+- Include one entry in "results" for every criterion above, in order.
+- "met": true means fully satisfied by the code in this worktree.
+- "met": false means missing, broken, or only partially addressed.
+- Output valid JSON only. No commentary outside the JSON.`,
+		"`go test ./...`",
+		card.Title,
+		card.Description,
+		criteriaList.String(),
+		"`git diff --name-only main...HEAD`",
+		"`cat <path>` / your file-reading tools",
+		"`git diff main...HEAD`",
+	)
 }
 
-// buildReviewPrompt asks the LLM to review the diff for code quality and
-// return a strict JSON verdict (APPROVE / REQUEST_CHANGES) plus suggestions.
-func buildReviewPrompt(card Card, diff string) string {
-	diff = truncateForPrompt(diff, 15000)
+// buildReviewPrompt frames Claude as a senior reviewer of code they did
+// NOT write. Skepticism is the point — the same model wrote the code, so
+// a fresh prompt + reviewer framing is what reduces rubber-stamping.
+func buildReviewPrompt(card Card) string {
+	return fmt.Sprintf(`You are a senior code reviewer for a GitHub issue implementation.
 
-	return fmt.Sprintf(`You are reviewing code for a GitHub issue implementation.
+IMPORTANT: You did NOT write this code. Treat it with the same skepticism you would a junior
+engineer's first PR. Your job is to catch bugs, missing tests, security issues, and code that
+"looks fine" but breaks under load — not to validate work you remember doing.
+
+You are running inside the git worktree with the candidate change checked out. You have full
+access to read files, follow imports, and run %s. Use that context.
 
 ## Issue: %s
 
 ## Description
 %s
 
-## Diff
-`+"```diff\n%s\n```"+`
+## What to do
+1. Inspect the worktree. Useful commands:
+   - %s to see what changed
+   - %s to read files directly (preferred)
+   - %s to see the diff if you need it
+2. Evaluate the change for:
+   - Correctness vs the issue requirements above
+   - Edge cases and potential regressions
+   - Test coverage (a feature without tests is REQUEST_CHANGES)
+   - Security and obvious performance footguns
+   - Adherence to existing patterns in the codebase
+3. Decide APPROVE or REQUEST_CHANGES.
 
-Evaluate:
-1. Correctness vs issue requirements
-2. Edge cases and regressions
-3. Test coverage expectations
-4. Security/risk
+## Output
+Respond with ONLY a JSON object — no prose, no markdown fences. Shape:
 
-Return STRICT JSON only with shape:
 {
-  "verdict": "APPROVE|REQUEST_CHANGES",
-  "summary": "short paragraph",
-  "suggestions": ["actionable change 1", "actionable change 2"]
+  "verdict": "APPROVE" | "REQUEST_CHANGES",
+  "summary": "<short paragraph explaining the verdict>",
+  "suggestions": ["<actionable change 1>", "<actionable change 2>"]
 }
 
 Rules:
-- Use REQUEST_CHANGES when concrete fixes are required.
-- Keep suggestions concise and specific.
-- If verdict is APPROVE, suggestions may be empty.
-- Output valid JSON only (no markdown fences).`, card.Title, card.Description, diff)
+- Use REQUEST_CHANGES whenever concrete fixes are required. Bias toward REQUEST_CHANGES on
+  the first review — if it's borderline, ask for the fix.
+- Suggestions must be specific and actionable; the implementing agent reads them verbatim.
+- If verdict is APPROVE, "suggestions" may be empty.
+- Output valid JSON only. No commentary outside the JSON.`,
+		"`go test ./...`",
+		card.Title,
+		card.Description,
+		"`git diff --name-only main...HEAD`",
+		"`cat <path>` / your file-reading tools",
+		"`git diff main...HEAD`",
+	)
+}
+
+// buildTriagePrompt frames Claude as a backlog triager analyzing both
+// the user's existing cards and the actual repo state.
+func buildTriagePrompt(backlog []Card, openIssues []github.Issue) string {
+	cards := make([]triageCardWire, 0, len(backlog))
+	for _, c := range backlog {
+		cards = append(cards, triageCardWire{
+			ID:          c.ID.String(),
+			Title:       strings.TrimSpace(c.Title),
+			Description: strings.TrimSpace(c.Description),
+		})
+	}
+	sort.Slice(cards, func(i, j int) bool { return cards[i].ID < cards[j].ID })
+
+	issues := make([]triageIssueWire, 0, len(openIssues))
+	for _, i := range openIssues {
+		issues = append(issues, triageIssueWire{
+			Number: i.Number,
+			Title:  strings.TrimSpace(i.Title),
+			Body:   strings.TrimSpace(i.Body),
+		})
+	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].Number < issues[j].Number })
+
+	cardsJSON, _ := json.MarshalIndent(cards, "", "  ")
+	issuesJSON, _ := json.MarshalIndent(issues, "", "  ")
+
+	return fmt.Sprintf(`You are a senior engineer triaging a developer's backlog.
+
+You are running inside the project's repository. Use it: read the code, look at recent commits,
+inspect the file tree to understand what is built and what is missing. Compare reality against
+the backlog cards and the open GitHub issues.
+
+You may propose three kinds of actions:
+- "create": a new backlog card for an open GitHub issue that is not yet tracked, or for
+  engineering work the backlog clearly missed.
+- "close": close (delete) a backlog card that is no longer relevant — already implemented in
+  the code, superseded, or obsolete.
+- "rewrite": rewrite a card whose title or description is vague or missing acceptance criteria,
+  preserving its original intent.
+
+Be conservative. Prefer fewer high-confidence proposals over many speculative ones. For "close"
+in particular, only propose it if you can point to concrete evidence in the code that the work
+is done.
+
+## Current backlog cards (JSON)
+%s
+
+## Repo open GitHub issues (JSON)
+%s
+
+## Output
+Respond with ONLY a JSON object — no prose, no markdown fences. Shape:
+
+{
+  "proposals": [
+    {
+      "type": "create" | "close" | "rewrite",
+      "card_id": "<uuid; required for close and rewrite, omit for create>",
+      "title": "<proposed title; required for create and rewrite>",
+      "description": "<proposed markdown body>",
+      "acceptance_criteria": ["...", "..."],
+      "reason": "<why this proposal — cite files/issues where relevant>"
+    }
+  ]
+}
+
+Rules:
+- For "close" and "rewrite", card_id MUST be one of the backlog card ids above.
+- For "create", do NOT set card_id.
+- Always include a "reason".
+- Output valid JSON only. No commentary outside the JSON.`,
+		string(cardsJSON), string(issuesJSON))
+}
+
+// triage*Wire types are the JSON shape we serialise into the triage prompt.
+type triageCardWire struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+type triageIssueWire struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body,omitempty"`
 }
 
 // buildPRBody renders the PR body shown on GitHub after the loop succeeds.

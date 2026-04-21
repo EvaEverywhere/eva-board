@@ -65,10 +65,8 @@ make lint        # go vet ./...
 Backend reads `.env` via godotenv. Key variables:
 - `DATABASE_URL` — Postgres connection
 - `JWT_SECRET` — JWT signing key
-- `LLM_API_KEY` — OpenRouter API key
-- `LLM_MODEL` — Model for verification + review
 - `TOKEN_ENCRYPTION_KEY` — AES key for stored GitHub tokens
-- `CODEGEN_AGENT` — `claude-code` or `generic`
+- `CODEGEN_AGENT` — `claude-code` or `generic` (also drives verification + review + triage)
 
 ## Conventions
 

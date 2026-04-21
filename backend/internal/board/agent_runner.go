@@ -354,12 +354,37 @@ func (m *AgentManager) runVerificationLoop(ctx context.Context, run *agentRun) (
 		if err != nil {
 			return last, fmt.Errorf("reload card: %w", err)
 		}
-		diff, err := m.gitDiff(ctx, run.branch)
-		if err != nil {
-			return last, fmt.Errorf("get diff: %w", err)
+
+		// Empty-diff short-circuit: if the agent didn't change anything,
+		// fail every criterion without spending a Claude call.
+		diff, diffErr := m.gitDiff(ctx, run.branch)
+		if diffErr == nil && strings.TrimSpace(diff) == "" {
+			criteria := ParseAcceptanceCriteria(card.Description)
+			last = VerificationResult{
+				AllPassed: len(criteria) == 0,
+				Verdicts:  makeAllFail(criteria, "No code changes found on the branch."),
+				Summary:   "Agent produced no code changes.",
+			}
+			log.Printf("[board-agent] verification %d/%d for card %s: %s", iteration, m.cfg.MaxVerifyIterations, shortID(cardID), last.Summary)
+			if last.AllPassed {
+				return last, nil
+			}
+			if iteration == m.cfg.MaxVerifyIterations {
+				return last, nil
+			}
+			feedback := formatFailedCriteriaFeedback(last.Verdicts)
+			_ = m.cards.SetAgentStatus(ctx, cardID, AgentStatusRunning)
+			if err := m.invokeCodingAgent(ctx, run, *card, feedback); err != nil {
+				return last, fmt.Errorf("reinvoke after empty-diff: %w", err)
+			}
+			if err := m.commitAndPush(ctx, run, iteration); err != nil {
+				return last, fmt.Errorf("commit+push after empty-diff retry: %w", err)
+			}
+			_ = m.cards.SetAgentStatus(ctx, cardID, AgentStatusVerifying)
+			continue
 		}
 
-		result, err := verifyCard(ctx, m.llm, m.cfg.LLMModel, *card, diff)
+		result, err := verifyCard(ctx, m.code, *card, run.worktreeDir)
 		if err != nil {
 			return last, err
 		}
@@ -405,12 +430,8 @@ func (m *AgentManager) runReviewLoop(ctx context.Context, run *agentRun) (Review
 		if err != nil {
 			return last, fmt.Errorf("reload card: %w", err)
 		}
-		diff, err := m.gitDiff(ctx, run.branch)
-		if err != nil {
-			return last, fmt.Errorf("get diff: %w", err)
-		}
 
-		review, err := ReviewCard(ctx, m.llm, m.cfg.LLMModel, *card, diff)
+		review, err := ReviewCard(ctx, m.code, *card, run.worktreeDir)
 		if err != nil {
 			return last, err
 		}

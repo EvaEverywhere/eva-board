@@ -41,7 +41,7 @@ Plus autonomous backlog maintenance: triage analyzes your repo and proposes new 
 git clone https://github.com/EvaEverywhere/eva-board.git
 cd eva-board
 cp .env.example .env
-# Fill in LLM_API_KEY and TOKEN_ENCRYPTION_KEY
+# Fill in TOKEN_ENCRYPTION_KEY (verification + review run through Codegen)
 make up
 # Open http://localhost:8081
 ```

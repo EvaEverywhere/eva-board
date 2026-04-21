@@ -84,12 +84,11 @@ func newAgentManagerForTest(
 	store *fakeCardStore,
 	code *fakeCodegen,
 	gh *fakeAgentGitHub,
-	llmFake *fakeLLM,
 	maxVerify, maxReview int,
 	repoPath string,
 ) *AgentManager {
 	t.Helper()
-	return NewAgentManager(store, code, gh, llmFake, AgentConfig{
+	return NewAgentManager(store, code, gh, AgentConfig{
 		RepoOwner:           "owner",
 		RepoName:            "repo",
 		RepoPath:            repoPath,
@@ -97,7 +96,6 @@ func newAgentManagerForTest(
 		BaseBranch:          "main",
 		MaxVerifyIterations: maxVerify,
 		MaxReviewCycles:     maxReview,
-		LLMModel:            "test-model",
 	})
 }
 
@@ -126,13 +124,15 @@ func TestAgentManager_HappyPath(t *testing.T) {
 	card := makeAgentCard()
 	store.seed(card)
 
-	code := &fakeCodegen{touchFile: touchHelloFile}
+	code := &fakeCodegen{
+		touchFile: touchHelloFile,
+		reviewerOutputs: []string{
+			verifyAllPassedJSON,
+			reviewApproveJSON,
+		},
+	}
 	gh := &fakeAgentGitHub{prNumber: 7, prHTMLURL: "https://example.com/pr/7"}
-	llmFake := &fakeLLM{responses: []string{
-		verifyAllPassedJSON,
-		reviewApproveJSON,
-	}}
-	m := newAgentManagerForTest(t, store, code, gh, llmFake, 3, 3, workDir)
+	m := newAgentManagerForTest(t, store, code, gh, 3, 3, workDir)
 
 	if err := m.StartAgent(context.Background(), card.ID); err != nil {
 		t.Fatalf("StartAgent: %v", err)
@@ -155,8 +155,9 @@ func TestAgentManager_HappyPath(t *testing.T) {
 	if gh.createCalls != 1 {
 		t.Fatalf("expected 1 CreatePR call, got %d", gh.createCalls)
 	}
-	if code.Calls() != 1 {
-		t.Fatalf("expected 1 codegen call on happy path, got %d", code.Calls())
+	// 1 implementer call + 1 verify reviewer + 1 review reviewer = 3.
+	if code.Calls() != 3 {
+		t.Fatalf("expected 3 codegen calls (1 implementer + verify + review), got %d", code.Calls())
 	}
 
 	// The status history must include verifying and reviewing on the
@@ -176,15 +177,17 @@ func TestAgentManager_VerificationRetryExhausted(t *testing.T) {
 	card := makeAgentCard()
 	store.seed(card)
 
-	code := &fakeCodegen{touchFile: touchHelloFile}
+	code := &fakeCodegen{
+		touchFile: touchHelloFile,
+		// Always return all-failed so every iteration retries until the
+		// loop gives up.
+		reviewerOutputs: []string{
+			verifyAllFailedJSON,
+			verifyAllFailedJSON,
+		},
+	}
 	gh := &fakeAgentGitHub{}
-	// Always return all-failed so every iteration retries until the
-	// loop gives up.
-	llmFake := &fakeLLM{responses: []string{
-		verifyAllFailedJSON,
-		verifyAllFailedJSON,
-	}}
-	m := newAgentManagerForTest(t, store, code, gh, llmFake, 2, 5, workDir)
+	m := newAgentManagerForTest(t, store, code, gh, 2, 5, workDir)
 
 	if err := m.StartAgent(context.Background(), card.ID); err != nil {
 		t.Fatalf("StartAgent: %v", err)
@@ -198,10 +201,11 @@ func TestAgentManager_VerificationRetryExhausted(t *testing.T) {
 	if gh.createCalls != 0 {
 		t.Fatalf("PR must not be created when verification fails (got %d calls)", gh.createCalls)
 	}
-	// Codegen runs once initially + once per failed-then-retry loop.
-	// With MaxVerifyIterations=2 we expect: 1 initial + 1 retry = 2.
-	if code.Calls() < 2 {
-		t.Fatalf("expected at least 2 codegen calls (initial + 1 retry), got %d", code.Calls())
+	// Implementer runs once initially + once per failed-then-retry loop.
+	// With MaxVerifyIterations=2 we expect: 1 initial + 1 retry + 2 verify
+	// reviewer calls = 4.
+	if code.Calls() < 4 {
+		t.Fatalf("expected at least 4 codegen calls (initial + retry + 2 verifies), got %d", code.Calls())
 	}
 }
 
@@ -211,25 +215,27 @@ func TestAgentManager_ReviewRetryExhausted(t *testing.T) {
 	card := makeAgentCard()
 	store.seed(card)
 
-	code := &fakeCodegen{touchFile: touchHelloFile}
+	code := &fakeCodegen{
+		touchFile: touchHelloFile,
+		// Verification must keep passing so review is reached, but review
+		// always REQUEST_CHANGES so the cycle exhausts. The review loop
+		// re-verifies after each REQUEST_CHANGES, so the response order is
+		// verify, review, verify (re-verify after request_changes), review
+		// (final cycle).
+		reviewerOutputs: []string{
+			// initial verification phase
+			verifyAllPassedJSON,
+			// review cycle 1 → REQUEST_CHANGES
+			reviewRequestChangesJSON,
+			// re-verification after REQUEST_CHANGES (still passes so we
+			// proceed to next review cycle)
+			verifyAllPassedJSON,
+			// review cycle 2 → REQUEST_CHANGES → exhausts MaxReviewCycles=2
+			reviewRequestChangesJSON,
+		},
+	}
 	gh := &fakeAgentGitHub{}
-	// Verification must keep passing so review is reached, but review
-	// always REQUEST_CHANGES so the cycle exhausts. The review loop
-	// re-verifies after each REQUEST_CHANGES, so the response order is
-	// verify, review, verify (re-verify after request_changes), review
-	// (final cycle).
-	llmFake := &fakeLLM{responses: []string{
-		// initial verification phase
-		verifyAllPassedJSON,
-		// review cycle 1 → REQUEST_CHANGES
-		reviewRequestChangesJSON,
-		// re-verification after REQUEST_CHANGES (still passes so we
-		// proceed to next review cycle)
-		verifyAllPassedJSON,
-		// review cycle 2 → REQUEST_CHANGES → exhausts MaxReviewCycles=2
-		reviewRequestChangesJSON,
-	}}
-	m := newAgentManagerForTest(t, store, code, gh, llmFake, 3, 2, workDir)
+	m := newAgentManagerForTest(t, store, code, gh, 3, 2, workDir)
 
 	if err := m.StartAgent(context.Background(), card.ID); err != nil {
 		t.Fatalf("StartAgent: %v", err)
@@ -267,8 +273,7 @@ func TestAgentManager_StopMidRun(t *testing.T) {
 		touchFile:  touchHelloFile,
 	}
 	gh := &fakeAgentGitHub{}
-	llmFake := &fakeLLM{}
-	m := newAgentManagerForTest(t, store, code, gh, llmFake, 3, 3, workDir)
+	m := newAgentManagerForTest(t, store, code, gh, 3, 3, workDir)
 
 	if err := m.StartAgent(context.Background(), card.ID); err != nil {
 		t.Fatalf("StartAgent: %v", err)
@@ -303,13 +308,15 @@ func TestAgentManager_GitHubFailureSetsFailedStatus(t *testing.T) {
 	card := makeAgentCard()
 	store.seed(card)
 
-	code := &fakeCodegen{touchFile: touchHelloFile}
+	code := &fakeCodegen{
+		touchFile: touchHelloFile,
+		reviewerOutputs: []string{
+			verifyAllPassedJSON,
+			reviewApproveJSON,
+		},
+	}
 	gh := &fakeAgentGitHub{createErr: errors.New("github 502: upstream broke")}
-	llmFake := &fakeLLM{responses: []string{
-		verifyAllPassedJSON,
-		reviewApproveJSON,
-	}}
-	m := newAgentManagerForTest(t, store, code, gh, llmFake, 3, 3, workDir)
+	m := newAgentManagerForTest(t, store, code, gh, 3, 3, workDir)
 
 	if err := m.StartAgent(context.Background(), card.ID); err != nil {
 		t.Fatalf("StartAgent: %v", err)

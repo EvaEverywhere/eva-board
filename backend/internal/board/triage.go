@@ -1,27 +1,26 @@
 // Package board — triage flow.
 //
-// TriageService analyzes the user's backlog cards against the actual repo
-// state (open GitHub issues) and proposes maintenance actions: new cards
-// to add, cards to close, and cards whose title/description/AC should be
-// rewritten.
+// TriageService analyzes the user's backlog cards against the actual
+// repo state and proposes maintenance actions: new cards to add, cards
+// to close, and cards whose title/description/AC should be rewritten.
 //
-// All proposals are read-only suggestions. Callers MUST surface them to
+// Triage runs the Codegen reviewer agent in the user's repo checkout so
+// the model sees the real code (not just a list of titles). All
+// proposals are read-only suggestions — callers MUST surface them to
 // the user for approval and pass only the approved subset to
 // ApplyProposals.
 package board
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
 // TriageProposalType enumerates the three actions triage can propose.
@@ -46,12 +45,10 @@ type TriageProposal struct {
 
 // TriageConfig configures a TriageService.
 type TriageConfig struct {
-	// Model is the LLM model identifier (e.g. "openai/gpt-4o-mini").
-	Model string
-	// Temperature passed to the LLM. Defaults to 0.2 if zero.
-	Temperature float64
-	// MaxTokens for the LLM completion. Defaults to 4000 if <= 0.
-	MaxTokens int
+	// WorkDir is the local checkout the reviewer agent runs in. When
+	// empty the agent runs in its caller's cwd, which is rarely useful;
+	// callers should set this to the user's RepoPath.
+	WorkDir string
 	// GitHub is an optional GitHub client used to fetch open issues for
 	// extra repo context. If nil, triage runs against backlog cards only.
 	GitHub github.Client
@@ -61,33 +58,27 @@ type TriageConfig struct {
 	RepoName  string
 }
 
-// TriageService produces TriageProposals via an LLM.
+// TriageService produces TriageProposals via a Codegen reviewer agent.
 type TriageService struct {
 	cards cardStore
-	llm   llm.Client
+	agent codegen.Agent
 	cfg   TriageConfig
 }
 
 // NewTriageService constructs a TriageService.
-func NewTriageService(cards cardStore, llmClient llm.Client, cfg TriageConfig) *TriageService {
-	if cfg.Temperature == 0 {
-		cfg.Temperature = 0.2
-	}
-	if cfg.MaxTokens <= 0 {
-		cfg.MaxTokens = 4000
-	}
-	return &TriageService{cards: cards, llm: llmClient, cfg: cfg}
+func NewTriageService(cards cardStore, agent codegen.Agent, cfg TriageConfig) *TriageService {
+	return &TriageService{cards: cards, agent: agent, cfg: cfg}
 }
 
 // AnalyzeBacklog reads the user's backlog cards and (optionally) the
-// repo's open GitHub issues, asks the LLM for triage proposals, and
-// returns them. Read-only.
+// repo's open GitHub issues, asks the reviewer agent for triage
+// proposals, and returns them. Read-only.
 func (s *TriageService) AnalyzeBacklog(ctx context.Context, userID uuid.UUID) ([]TriageProposal, error) {
 	if s == nil || s.cards == nil {
 		return nil, fmt.Errorf("triage service not configured")
 	}
-	if s.llm == nil {
-		return nil, fmt.Errorf("triage requires an llm client")
+	if s.agent == nil {
+		return nil, fmt.Errorf("triage requires a codegen agent")
 	}
 
 	backlog, err := s.cards.List(ctx, userID, ColumnBacklog)
@@ -107,29 +98,13 @@ func (s *TriageService) AnalyzeBacklog(ctx context.Context, userID uuid.UUID) ([
 		}
 	}
 
-	prompt, err := buildTriagePrompt(backlog, openIssues)
-	if err != nil {
-		return nil, err
-	}
+	prompt := buildTriagePrompt(backlog, openIssues)
 
-	resp, err := s.llm.ChatCompletion(ctx, llm.CompletionRequest{
-		Model:       s.cfg.Model,
-		Temperature: s.cfg.Temperature,
-		MaxTokens:   s.cfg.MaxTokens,
-		Messages: []llm.Message{
-			{Role: "system", Content: triageSystemPrompt},
-			{Role: "user", Content: prompt},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("llm triage: %w", err)
+	var wire triageWire
+	if err := codegen.RunJSON(ctx, s.agent, prompt, s.cfg.WorkDir, &wire); err != nil {
+		return nil, fmt.Errorf("triage agent: %w", err)
 	}
-
-	proposals, err := parseTriageProposals(resp, backlog)
-	if err != nil {
-		return nil, fmt.Errorf("parse triage proposals: %w", err)
-	}
-	return proposals, nil
+	return filterTriageProposals(wire, backlog), nil
 }
 
 // ApplyProposals applies user-approved proposals. The caller MUST filter
@@ -198,36 +173,6 @@ func composeDescription(body string, ac []string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-const triageSystemPrompt = `You are a senior software engineer triaging a developer's backlog.
-You compare the backlog cards against the actual repo state (open GitHub issues) and propose maintenance actions.
-You ONLY propose actions; the user reviews and approves before anything is applied.
-
-You may propose three kinds of actions:
-- "create": a new backlog card for an open GitHub issue that is not yet tracked, or for engineering work the backlog clearly missed.
-- "close": close (delete) a backlog card that is no longer relevant — already done, superseded, or obsolete.
-- "rewrite": rewrite a card whose title or description is vague or missing acceptance criteria, leaving its meaning intact.
-
-Return ONLY valid JSON (no markdown fences, no commentary) with this shape:
-{
-  "proposals": [
-    {
-      "type": "create" | "close" | "rewrite",
-      "card_id": "uuid string when type is close or rewrite; omit for create",
-      "title": "proposed title (create or rewrite)",
-      "description": "proposed markdown body (create or rewrite)",
-      "acceptance_criteria": ["...", "..."],
-      "reason": "why this proposal"
-    }
-  ]
-}
-
-Rules:
-- Be conservative. Prefer fewer high-quality proposals over many speculative ones.
-- For "close" and "rewrite", card_id MUST be one of the backlog card ids provided.
-- For "create", do NOT set card_id.
-- For "create" and "rewrite", title MUST be concise and imperative.
-- Always include a "reason".`
-
 type triageWire struct {
 	Proposals []struct {
 		Type               string   `json:"type"`
@@ -239,16 +184,10 @@ type triageWire struct {
 	} `json:"proposals"`
 }
 
-func parseTriageProposals(raw string, backlog []Card) ([]TriageProposal, error) {
-	cleaned := llm.CleanJSON(raw)
-	if cleaned == "" {
-		return []TriageProposal{}, nil
-	}
-	var wire triageWire
-	if err := json.Unmarshal([]byte(cleaned), &wire); err != nil {
-		return nil, fmt.Errorf("invalid triage json: %w", err)
-	}
-
+// filterTriageProposals drops any proposal that fails validation
+// (unknown type, dangling card_id, empty create title) so the caller
+// only sees actionable suggestions.
+func filterTriageProposals(wire triageWire, backlog []Card) []TriageProposal {
 	allowed := map[uuid.UUID]struct{}{}
 	for _, c := range backlog {
 		allowed[c.ID] = struct{}{}
@@ -286,7 +225,7 @@ func parseTriageProposals(raw string, backlog []Card) ([]TriageProposal, error) 
 		}
 		out = append(out, proposal)
 	}
-	return out, nil
+	return out
 }
 
 func trimNonEmpty(in []string) []string {
@@ -306,55 +245,11 @@ func trimNonEmpty(in []string) []string {
 	return out
 }
 
-type triageBacklogCard struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-}
-
-type triageRepoIssue struct {
-	Number  int       `json:"number"`
-	Title   string    `json:"title"`
-	Body    string    `json:"body,omitempty"`
-	Updated time.Time `json:"updated_at,omitempty"`
-}
-
-func buildTriagePrompt(backlog []Card, openIssues []github.Issue) (string, error) {
-	cards := make([]triageBacklogCard, 0, len(backlog))
-	for _, c := range backlog {
-		cards = append(cards, triageBacklogCard{
-			ID:          c.ID.String(),
-			Title:       strings.TrimSpace(c.Title),
-			Description: strings.TrimSpace(c.Description),
-		})
-	}
-	sort.Slice(cards, func(i, j int) bool { return cards[i].ID < cards[j].ID })
-
-	issues := make([]triageRepoIssue, 0, len(openIssues))
-	for _, i := range openIssues {
-		issues = append(issues, triageRepoIssue{
-			Number:  i.Number,
-			Title:   strings.TrimSpace(i.Title),
-			Body:    strings.TrimSpace(i.Body),
-			Updated: i.UpdatedAt,
-		})
-	}
-	sort.Slice(issues, func(i, j int) bool { return issues[i].Number < issues[j].Number })
-
-	cardsJSON, err := json.MarshalIndent(cards, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal backlog cards: %w", err)
-	}
-	issuesJSON, err := json.MarshalIndent(issues, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal repo issues: %w", err)
-	}
-
-	var b strings.Builder
-	b.WriteString("## Current backlog cards (JSON)\n")
-	b.Write(cardsJSON)
-	b.WriteString("\n\n## Repo open GitHub issues (JSON)\n")
-	b.Write(issuesJSON)
-	b.WriteString("\n\nReturn the JSON object described in the system prompt.")
-	return b.String(), nil
+// sortBacklogByID is exposed to keep prompt content deterministic for
+// snapshot-style tests.
+func sortBacklogByID(in []Card) []Card {
+	out := make([]Card, len(in))
+	copy(out, in)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID.String() < out[j].ID.String() })
+	return out
 }

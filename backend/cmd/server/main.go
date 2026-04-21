@@ -24,7 +24,6 @@ import (
 	"github.com/EvaEverywhere/eva-board/backend/internal/bootstrap"
 	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	githubclient "github.com/EvaEverywhere/eva-board/backend/internal/github"
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
 func main() {
@@ -88,14 +87,11 @@ func main() {
 		log.Fatalf("codegen init: %v", err)
 	}
 
-	llmClient := llm.NewClient(core.Cfg.LLMAPIKey, core.Cfg.LLMBaseURL)
-
 	cardsHandler := board.NewCardsHandler(
-		cardsSvc, settingsSvc, codegenAgent, llmClient, ghFactory,
-		boardBroker, core.Cfg.LLMModel,
+		cardsSvc, settingsSvc, codegenAgent, ghFactory, boardBroker,
 	)
 	curateHandler := board.NewCurateHandler(
-		cardsSvc, settingsSvc, llmClient, ghFactory, core.Cfg.LLMModel,
+		cardsSvc, settingsSvc, codegenAgent, ghFactory,
 	)
 	webhookHandler := board.NewWebhookHandler(cardsSvc, boardBroker, core.Cfg.GitHubWebhookSecret)
 

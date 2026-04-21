@@ -22,7 +22,7 @@ func (noopAgent) Run(_ context.Context, _ string, _ string, _ ...codegen.RunOpti
 
 func newTestManager(t *testing.T) *AgentManager {
 	t.Helper()
-	m := NewAgentManager(nil, noopAgent{}, nil, nil, AgentConfig{LLMModel: "test-model"})
+	m := NewAgentManager(nil, noopAgent{}, nil, AgentConfig{})
 	if m == nil {
 		t.Fatal("NewAgentManager returned nil")
 	}
@@ -30,7 +30,7 @@ func newTestManager(t *testing.T) *AgentManager {
 }
 
 func TestAgentConfigDefaults(t *testing.T) {
-	m := NewAgentManager(nil, noopAgent{}, nil, nil, AgentConfig{LLMModel: "m"})
+	m := NewAgentManager(nil, noopAgent{}, nil, AgentConfig{})
 	if m.cfg.BranchPrefix != "eva-board/" {
 		t.Errorf("BranchPrefix default = %q, want eva-board/", m.cfg.BranchPrefix)
 	}
@@ -46,12 +46,11 @@ func TestAgentConfigDefaults(t *testing.T) {
 }
 
 func TestAgentConfig_RespectsExplicitValues(t *testing.T) {
-	m := NewAgentManager(nil, noopAgent{}, nil, nil, AgentConfig{
+	m := NewAgentManager(nil, noopAgent{}, nil, AgentConfig{
 		BranchPrefix:        "team/",
 		BaseBranch:          "develop",
 		MaxVerifyIterations: 7,
 		MaxReviewCycles:     2,
-		LLMModel:            "m",
 	})
 	if m.cfg.BranchPrefix != "team/" || m.cfg.BaseBranch != "develop" {
 		t.Fatalf("config not preserved: %+v", m.cfg)
