@@ -16,9 +16,6 @@ type Config struct {
 	ResendAPIKey        string
 	AuthEmailFrom       string
 	MobileAppScheme     string
-	LLMAPIKey           string
-	LLMModel            string
-	LLMBaseURL          string
 	GitHubAPIBaseURL    string
 	GitHubWebhookSecret string
 	TokenEncryptionKey  string
@@ -43,9 +40,6 @@ func Load() Config {
 		ResendAPIKey:          strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
 		AuthEmailFrom:         getEnv("AUTH_EMAIL_FROM", "Eva Board <onboarding@example.com>"),
 		MobileAppScheme:       getEnv("MOBILE_APP_SCHEME", "eva-board"),
-		LLMAPIKey:             strings.TrimSpace(os.Getenv("LLM_API_KEY")),
-		LLMModel:              getEnv("LLM_MODEL", "openai/gpt-4o-mini"),
-		LLMBaseURL:            getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		GitHubAPIBaseURL:      getEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
 		GitHubWebhookSecret:   strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")),
 		TokenEncryptionKey:    strings.TrimSpace(os.Getenv("TOKEN_ENCRYPTION_KEY")),

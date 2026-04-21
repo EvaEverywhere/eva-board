@@ -18,7 +18,7 @@ This adds a `Signed-off-by` trailer to your commit message, indicating you agree
 git clone https://github.com/EvaEverywhere/eva-board.git
 cd eva-board
 cp .env.example .env
-# Fill in required keys (LLM_API_KEY, TOKEN_ENCRYPTION_KEY)
+# Fill in required keys (TOKEN_ENCRYPTION_KEY)
 make up
 # API runs on :8080, web UI on :8081
 ```

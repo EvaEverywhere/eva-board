@@ -23,7 +23,6 @@ import (
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 	"github.com/google/uuid"
 )
 
@@ -48,11 +47,8 @@ type AgentConfig struct {
 	// the coding agent with failed-criteria feedback before giving up.
 	// Defaults to 3 when zero.
 	MaxVerifyIterations int
-	// MaxReviewCycles caps the LLM review retry loop. Defaults to 5.
+	// MaxReviewCycles caps the reviewer retry loop. Defaults to 5.
 	MaxReviewCycles int
-	// LLMModel is the model used for verification and review LLM calls.
-	// Required.
-	LLMModel string
 	// GitHubToken is used for `git push` over HTTPS when set. The github
 	// client receives its own token via Options.Token at construction.
 	GitHubToken string
@@ -64,7 +60,6 @@ type AgentManager struct {
 	cards cardStore
 	code  codegen.Agent
 	gh    github.Client
-	llm   llm.Client
 	cfg   AgentConfig
 
 	mu   sync.Mutex
@@ -91,7 +86,7 @@ type agentRun struct {
 // NOT verify that the coding-agent CLI or git is available — startup checks
 // happen lazily inside StartAgent so a missing CLI fails loudly per-card
 // instead of silently disabling the whole feature.
-func NewAgentManager(cards cardStore, code codegen.Agent, gh github.Client, llmClient llm.Client, cfg AgentConfig) *AgentManager {
+func NewAgentManager(cards cardStore, code codegen.Agent, gh github.Client, cfg AgentConfig) *AgentManager {
 	if cfg.BranchPrefix == "" {
 		cfg.BranchPrefix = "eva-board/"
 	}
@@ -108,7 +103,6 @@ func NewAgentManager(cards cardStore, code codegen.Agent, gh github.Client, llmC
 		cards: cards,
 		code:  code,
 		gh:    gh,
-		llm:   llmClient,
 		cfg:   cfg,
 		runs:  make(map[uuid.UUID]*agentRun),
 	}

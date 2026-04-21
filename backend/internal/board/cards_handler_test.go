@@ -72,7 +72,7 @@ func newCardsTestApp(t *testing.T, store cardStore, userID uuid.UUID, lc AgentLi
 		httputil.SetUserID(c, userID.String())
 		return c.Next()
 	})
-	h := NewCardsHandler(store, nil, nil, nil, nil, nil, "test-model")
+	h := NewCardsHandler(store, nil, nil, nil, nil)
 	h.SetAgentFactory(func(ctx context.Context, _ uuid.UUID) (AgentLifecycle, error) {
 		return lc, nil
 	})

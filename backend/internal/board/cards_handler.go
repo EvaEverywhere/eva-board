@@ -30,7 +30,6 @@ import (
 	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
 	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
 // AgentLifecycle is the slice of AgentManager that CardsHandler relies
@@ -55,10 +54,8 @@ type CardsHandler struct {
 	cards     cardStore
 	settings  *SettingsService
 	code      codegen.Agent
-	llm       llm.Client
 	ghFactory github.ClientFactory
 	broker    *Broker
-	llmModel  string
 
 	// agentFactory is set by tests via SetAgentFactory to substitute
 	// the real settings-driven AgentManager builder. nil means use the
@@ -75,19 +72,15 @@ func NewCardsHandler(
 	cards cardStore,
 	settings *SettingsService,
 	code codegen.Agent,
-	llmClient llm.Client,
 	ghFactory github.ClientFactory,
 	broker *Broker,
-	llmModel string,
 ) *CardsHandler {
 	return &CardsHandler{
 		cards:     cards,
 		settings:  settings,
 		code:      code,
-		llm:       llmClient,
 		ghFactory: ghFactory,
 		broker:    broker,
-		llmModel:  llmModel,
 	}
 }
 
@@ -436,7 +429,7 @@ func (h *CardsHandler) stopAgentBestEffort(userID, cardID uuid.UUID) {
 // buildAgentManager constructs a fresh AgentManager from the user's
 // stored settings. Returns a 400 AppError if settings are incomplete.
 func (h *CardsHandler) buildAgentManager(ctx context.Context, userID uuid.UUID) (*AgentManager, error) {
-	if h.settings == nil || h.ghFactory == nil || h.code == nil || h.llm == nil {
+	if h.settings == nil || h.ghFactory == nil || h.code == nil {
 		return nil, apperrors.New(http.StatusServiceUnavailable, "board agent is not configured on this server")
 	}
 	st, err := h.settings.Get(ctx, userID)
@@ -453,14 +446,13 @@ func (h *CardsHandler) buildAgentManager(ctx context.Context, userID uuid.UUID) 
 	gh := h.ghFactory.NewClient(token)
 	cfg := AgentConfig{
 		RepoOwner:           st.GitHubOwner,
-		RepoName:             st.GitHubRepo,
-		RepoPath:             st.RepoPath,
-		MaxVerifyIterations:  st.MaxVerifyIterations,
-		MaxReviewCycles:      st.MaxReviewCycles,
-		LLMModel:             h.llmModel,
-		GitHubToken:          token,
+		RepoName:            st.GitHubRepo,
+		RepoPath:            st.RepoPath,
+		MaxVerifyIterations: st.MaxVerifyIterations,
+		MaxReviewCycles:     st.MaxReviewCycles,
+		GitHubToken:         token,
 	}
-	return NewAgentManager(h.cards, h.code, gh, h.llm, cfg), nil
+	return NewAgentManager(h.cards, h.code, gh, cfg), nil
 }
 
 // diff returns the git diff for the card's worktree branch against the

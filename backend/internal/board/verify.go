@@ -2,12 +2,11 @@ package board
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
+	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 )
 
 // CriterionResult is the verdict for a single acceptance criterion.
@@ -59,7 +58,7 @@ func ParseAcceptanceCriteriaDetailed(description string) []AcceptanceCriterion {
 }
 
 // ParseAcceptanceCriteria returns just the criterion text in document order.
-// This is the form fed to the verification LLM.
+// This is the form fed to the verification agent.
 func ParseAcceptanceCriteria(description string) []string {
 	parsed := ParseAcceptanceCriteriaDetailed(description)
 	out := make([]string, 0, len(parsed))
@@ -69,29 +68,28 @@ func ParseAcceptanceCriteria(description string) []string {
 	return out
 }
 
-// VerifyAgentWork scores the diff against each acceptance criterion using the
-// LLM and returns a per-criterion verdict. When there are no criteria the
-// caller should treat it as auto-pass; this helper still returns an empty
-// slice so the caller can short-circuit on len == 0.
-func VerifyAgentWork(ctx context.Context, client llm.Client, model string, criteria []string, diff string) ([]CriterionResult, error) {
-	if client == nil {
-		return nil, fmt.Errorf("verify: llm client is nil")
+// VerifyAgentWork scores the worktree against each acceptance criterion
+// using a Codegen reviewer agent. The reviewer runs in worktreeDir so it
+// can read the changed files, follow imports, and inspect the diff
+// directly — strictly more context than a blind diff blob.
+//
+// When there are no criteria the caller should treat it as auto-pass; this
+// helper still returns nil so the caller can short-circuit on len == 0.
+func VerifyAgentWork(ctx context.Context, agent codegen.Agent, criteria []string, worktreeDir string) ([]CriterionResult, error) {
+	if agent == nil {
+		return nil, fmt.Errorf("verify: codegen agent is nil")
 	}
 	if len(criteria) == 0 {
 		return nil, nil
 	}
-	if strings.TrimSpace(diff) == "" {
-		return makeAllFail(criteria, "No code changes found on the branch."), nil
-	}
 
-	card := Card{Title: "Verification", Description: ""}
-	prompt := buildVerifyPrompt(card, criteria, diff)
-	return runVerificationLLM(ctx, client, model, prompt)
+	prompt := buildVerifyPrompt(Card{Title: "Verification"}, criteria)
+	return runVerificationAgent(ctx, agent, prompt, worktreeDir)
 }
 
 // verifyCard is the card-aware variant used by the agent loop so the issue
-// title and description reach the LLM.
-func verifyCard(ctx context.Context, client llm.Client, model string, card Card, diff string) (VerificationResult, error) {
+// title and description reach the reviewer.
+func verifyCard(ctx context.Context, agent codegen.Agent, card Card, worktreeDir string) (VerificationResult, error) {
 	criteria := ParseAcceptanceCriteria(card.Description)
 	if len(criteria) == 0 {
 		return VerificationResult{
@@ -100,16 +98,9 @@ func verifyCard(ctx context.Context, client llm.Client, model string, card Card,
 			Summary:   "No acceptance criteria found — auto-passing.",
 		}, nil
 	}
-	if strings.TrimSpace(diff) == "" {
-		return VerificationResult{
-			AllPassed: false,
-			Verdicts:  makeAllFail(criteria, "No code changes found on the branch."),
-			Summary:   "Agent produced no code changes.",
-		}, nil
-	}
 
-	prompt := buildVerifyPrompt(card, criteria, diff)
-	verdicts, err := runVerificationLLM(ctx, client, model, prompt)
+	prompt := buildVerifyPrompt(card, criteria)
+	verdicts, err := runVerificationAgent(ctx, agent, prompt, worktreeDir)
 	if err != nil {
 		return VerificationResult{}, err
 	}
@@ -120,35 +111,26 @@ func verifyCard(ctx context.Context, client llm.Client, model string, card Card,
 			break
 		}
 	}
-	summary := summarizeVerdicts(verdicts)
 	return VerificationResult{
 		AllPassed: allPassed,
 		Verdicts:  verdicts,
-		Summary:   summary,
+		Summary:   summarizeVerdicts(verdicts),
 	}, nil
 }
 
-func runVerificationLLM(ctx context.Context, client llm.Client, model, prompt string) ([]CriterionResult, error) {
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("verify: model is required")
-	}
-	raw, err := client.ChatCompletion(ctx, llm.CompletionRequest{
-		Model: model,
-		Messages: []llm.Message{
-			{Role: "user", Content: prompt},
-		},
-		Temperature: 0,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("verify: llm call: %w", err)
-	}
-
+func runVerificationAgent(ctx context.Context, agent codegen.Agent, prompt, worktreeDir string) ([]CriterionResult, error) {
 	var parsed struct {
+		// Accept either `results` (new prompt) or `verdicts` (legacy)
+		// so we don't fail open if Claude picks the older key.
+		Results  []CriterionResult `json:"results"`
 		Verdicts []CriterionResult `json:"verdicts"`
 		Summary  string            `json:"summary"`
 	}
-	if err := json.Unmarshal([]byte(llm.CleanJSON(raw)), &parsed); err != nil {
-		return nil, fmt.Errorf("verify: parse llm json: %w (raw=%q)", err, raw)
+	if err := codegen.RunJSON(ctx, agent, prompt, worktreeDir, &parsed); err != nil {
+		return nil, fmt.Errorf("verify: %w", err)
+	}
+	if len(parsed.Results) > 0 {
+		return parsed.Results, nil
 	}
 	return parsed.Verdicts, nil
 }

@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
+	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
 // CurateHandler exposes triage, spring-clean, and combined curate
@@ -24,25 +24,22 @@ import (
 type CurateHandler struct {
 	cards     cardStore
 	settings  *SettingsService
-	llm       llm.Client
+	agent     codegen.Agent
 	ghFactory github.ClientFactory
-	llmModel  string
 }
 
 // NewCurateHandler builds a CurateHandler.
 func NewCurateHandler(
 	cards cardStore,
 	settings *SettingsService,
-	llmClient llm.Client,
+	agent codegen.Agent,
 	ghFactory github.ClientFactory,
-	llmModel string,
 ) *CurateHandler {
 	return &CurateHandler{
 		cards:     cards,
 		settings:  settings,
-		llm:       llmClient,
+		agent:     agent,
 		ghFactory: ghFactory,
-		llmModel:  llmModel,
 	}
 }
 
@@ -156,7 +153,7 @@ func (h *CurateHandler) curate(c *fiber.Ctx) error {
 }
 
 func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID) (*TriageService, error) {
-	if h.settings == nil || h.llm == nil {
+	if h.settings == nil || h.agent == nil {
 		return nil, apperrors.New(http.StatusServiceUnavailable, "triage is not configured on this server")
 	}
 	st, err := h.settings.Get(ctx, userID)
@@ -164,7 +161,7 @@ func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID
 		return nil, err
 	}
 	cfg := TriageConfig{
-		Model:     h.llmModel,
+		WorkDir:   st.RepoPath,
 		RepoOwner: st.GitHubOwner,
 		RepoName:  st.GitHubRepo,
 	}
@@ -174,7 +171,7 @@ func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID
 			cfg.GitHub = h.ghFactory.NewClient(token)
 		}
 	}
-	return NewTriageService(h.cards, h.llm, cfg), nil
+	return NewTriageService(h.cards, h.agent, cfg), nil
 }
 
 func (h *CurateHandler) buildSpringCleanService(ctx context.Context, userID uuid.UUID) (*SpringCleanService, error) {

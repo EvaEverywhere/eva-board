@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
 // TestTriageService_ApplyProposals_OnlyAppliesPassedSubset verifies the
@@ -34,7 +32,7 @@ func TestTriageService_ApplyProposals_OnlyAppliesPassedSubset(t *testing.T) {
 		{Type: TriageProposalCreate, Title: "Phantom card", Reason: "not approved"},
 	}
 
-	svc := NewTriageService(store, &fakeLLM{}, TriageConfig{Model: "test"})
+	svc := NewTriageService(store, &fakeCodegen{}, TriageConfig{})
 	if err := svc.ApplyProposals(context.Background(), userID, approved); err != nil {
 		t.Fatalf("ApplyProposals: %v", err)
 	}
@@ -74,11 +72,11 @@ func TestCurateService_Run_AggregatesBothPipelines(t *testing.T) {
 	store := newFakeCardStore()
 	userID := uuid.New()
 
-	// Triage LLM returns one rewrite proposal.
+	// Triage agent returns one rewrite proposal.
 	card := makeBacklogCard(store, userID)
 	triageJSON := `{"proposals":[{"type":"rewrite","card_id":"` + card.ID.String() + `","title":"Better","reason":"vague"}]}`
-	llmFake := &fakeLLM{responses: []string{triageJSON}}
-	triage := NewTriageService(store, llmFake, TriageConfig{Model: "test"})
+	fc := &fakeCodegen{reviewerOutputs: []string{triageJSON}}
+	triage := NewTriageService(store, fc, TriageConfig{})
 
 	// Spring clean with an empty config (no repo path, no GH client)
 	// returns no actions but does not error — exactly what we want
@@ -108,9 +106,9 @@ func TestCurateService_Run_PartialFailureSurfacesError(t *testing.T) {
 	userID := uuid.New()
 	makeBacklogCard(store, userID)
 
-	// Triage LLM is broken; spring clean returns nothing (empty cfg).
-	llmFake := &fakeLLM{err: errors.New("llm boom")}
-	triage := NewTriageService(store, llmFake, TriageConfig{Model: "test"})
+	// Triage agent is broken; spring clean returns nothing (empty cfg).
+	fc := &fakeCodegen{runErr: errors.New("codegen boom")}
+	triage := NewTriageService(store, fc, TriageConfig{})
 	cleanup := NewSpringCleanService(nil, SpringCleanConfig{})
 
 	res, err := NewCurateService(triage, cleanup).Run(context.Background(), userID)
@@ -130,7 +128,7 @@ func TestTriageService_ApplyProposals_EmptyIsNoop(t *testing.T) {
 	userID := uuid.New()
 	makeBacklogCard(store, userID)
 
-	svc := NewTriageService(store, &fakeLLM{}, TriageConfig{Model: "test"})
+	svc := NewTriageService(store, &fakeCodegen{}, TriageConfig{})
 	if err := svc.ApplyProposals(context.Background(), userID, nil); err != nil {
 		t.Fatalf("expected nil error for empty slice, got %v", err)
 	}
@@ -140,6 +138,3 @@ func TestTriageService_ApplyProposals_EmptyIsNoop(t *testing.T) {
 	}
 }
 
-// guard: ensure fakeLLM matches the llm.Client interface so any
-// signature drift breaks here, not in a downstream test.
-var _ llm.Client = (*fakeLLM)(nil)

@@ -10,7 +10,6 @@ import (
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 	"github.com/google/uuid"
 )
 
@@ -271,15 +270,26 @@ func (f *fakeCardStore) SetMetadata(ctx context.Context, cardID uuid.UUID, key s
 }
 
 // fakeCodegen is a codegen.Agent that records prompts and produces
-// configurable outputs. By default each Run is a no-op success; callers
-// override touchFile / runErr to drive specific scenarios.
+// configurable outputs. It serves as both the implementer agent (where
+// callers set touchFile to write files into the worktree) and the
+// reviewer agent (where reviewerOutputs is a FIFO of JSON responses
+// returned for verify/review/triage prompts).
 type fakeCodegen struct {
-	mu        sync.Mutex
-	calls     int
-	prompts   []string
-	workDirs  []string
+	mu       sync.Mutex
+	calls    int
+	prompts  []string
+	workDirs []string
+
+	// touchFile, when set, is invoked on each implementer call so the
+	// worktree gains a real change.
 	touchFile func(workDir string, call int) error
-	runErr    error
+	// runErr, when set, is returned for every Run.
+	runErr error
+
+	// reviewerOutputs is consumed in order by Run when the prompt looks
+	// like a reviewer prompt (verify/review/triage). When the queue is
+	// empty the Run falls through to touchFile.
+	reviewerOutputs []string
 
 	// blockUntil, when non-nil, makes Run wait until either the
 	// channel is closed or the context is cancelled. If ctx wins, Run
@@ -292,6 +302,14 @@ type fakeCodegen struct {
 
 func (f *fakeCodegen) Name() string { return "fake-codegen" }
 
+// isReviewerPrompt sniffs the prompt for reviewer-framing markers. Verify
+// and review prompts both start with "You are a senior code reviewer";
+// triage prompts start with "You are a senior engineer triaging".
+func isReviewerPrompt(prompt string) bool {
+	return strings.Contains(prompt, "senior code reviewer") ||
+		strings.Contains(prompt, "senior engineer triaging")
+}
+
 func (f *fakeCodegen) Run(ctx context.Context, prompt, workDir string, _ ...codegen.RunOption) (codegen.Result, error) {
 	f.mu.Lock()
 	f.calls++
@@ -302,6 +320,14 @@ func (f *fakeCodegen) Run(ctx context.Context, prompt, workDir string, _ ...code
 	runErr := f.runErr
 	block := f.blockUntil
 	startedCh := f.started
+
+	var reviewerOut string
+	hasReviewerOut := false
+	if isReviewerPrompt(prompt) && len(f.reviewerOutputs) > 0 {
+		reviewerOut = f.reviewerOutputs[0]
+		f.reviewerOutputs = f.reviewerOutputs[1:]
+		hasReviewerOut = true
+	}
 	f.mu.Unlock()
 
 	if startedCh != nil {
@@ -323,6 +349,15 @@ func (f *fakeCodegen) Run(ctx context.Context, prompt, workDir string, _ ...code
 	if runErr != nil {
 		return codegen.Result{ExitCode: 1, Output: "fake codegen failure"}, runErr
 	}
+	if hasReviewerOut {
+		return codegen.Result{ExitCode: 0, Output: reviewerOut, Duration: time.Millisecond}, nil
+	}
+	if isReviewerPrompt(prompt) {
+		// Reviewer prompt with no queued response — return an empty JSON
+		// object so callers see deterministic "no proposals / no
+		// verdicts" behaviour rather than a panic.
+		return codegen.Result{ExitCode: 0, Output: "{}", Duration: time.Millisecond}, nil
+	}
 	if touch != nil {
 		if err := touch(workDir, call); err != nil {
 			return codegen.Result{ExitCode: 1, Output: err.Error()}, err
@@ -337,37 +372,12 @@ func (f *fakeCodegen) Calls() int {
 	return f.calls
 }
 
-// fakeLLM dispenses canned ChatCompletion responses. Tests load the
-// responses queue with the JSON bodies the verify/review parsers expect
-// in the order they will be requested.
-type fakeLLM struct {
-	mu        sync.Mutex
-	responses []string
-	calls     []llm.CompletionRequest
-	err       error
-}
-
-func (f *fakeLLM) ChatCompletion(ctx context.Context, req llm.CompletionRequest) (string, error) {
+func (f *fakeCodegen) Prompts() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, req)
-	if f.err != nil {
-		return "", f.err
-	}
-	if len(f.responses) == 0 {
-		return "", fmt.Errorf("fakeLLM: no responses queued (call #%d)", len(f.calls))
-	}
-	out := f.responses[0]
-	f.responses = f.responses[1:]
-	return out, nil
-}
-
-func (f *fakeLLM) ChatCompletionFull(ctx context.Context, req llm.CompletionRequest) (llm.CompletionResponse, error) {
-	content, err := f.ChatCompletion(ctx, req)
-	if err != nil {
-		return llm.CompletionResponse{}, err
-	}
-	return llm.CompletionResponse{Content: content}, nil
+	out := make([]string, len(f.prompts))
+	copy(out, f.prompts)
+	return out
 }
 
 // fakeAgentGitHub extends the read-only fakeGitHub with a recording

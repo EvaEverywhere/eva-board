@@ -1,6 +1,8 @@
 package board
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -137,6 +139,50 @@ func TestFormatFailedCriteriaFeedback_OnlyIncludesFailures(t *testing.T) {
 		if !stringContains(got, want) {
 			t.Errorf("feedback missing %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestVerifyAgentWork_NoCriteriaReturnsNil(t *testing.T) {
+	got, err := VerifyAgentWork(context.Background(), &fakeCodegen{}, nil, "/tmp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil verdicts when no criteria, got %#v", got)
+	}
+}
+
+func TestVerifyAgentWork_NilAgent(t *testing.T) {
+	_, err := VerifyAgentWork(context.Background(), nil, []string{"a"}, "/tmp")
+	if err == nil {
+		t.Fatal("expected error when agent is nil")
+	}
+}
+
+func TestVerifyAgentWork_ParsesAgentVerdicts(t *testing.T) {
+	fc := &fakeCodegen{
+		reviewerOutputs: []string{
+			`{"results":[{"criterion":"a","met":true,"reason":"ok"},{"criterion":"b","met":false,"reason":"nope"}],"summary":"1/2"}`,
+		},
+	}
+	got, err := VerifyAgentWork(context.Background(), fc, []string{"a", "b"}, "/tmp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d verdicts, want 2", len(got))
+	}
+	if !got[0].Met || got[1].Met {
+		t.Fatalf("unexpected verdict states: %#v", got)
+	}
+}
+
+func TestVerifyAgentWork_AgentError(t *testing.T) {
+	want := errors.New("boom")
+	fc := &fakeCodegen{runErr: want}
+	_, err := VerifyAgentWork(context.Background(), fc, []string{"a"}, "/tmp")
+	if err == nil || !errors.Is(err, want) {
+		t.Fatalf("expected wrapped agent error, got %v", err)
 	}
 }
 

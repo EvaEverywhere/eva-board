@@ -2,14 +2,13 @@ package board
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
+	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 )
 
-// ReviewVerdict is the LLM's high-level disposition of a diff.
+// ReviewVerdict is the reviewer's high-level disposition of the change.
 type ReviewVerdict string
 
 const (
@@ -26,8 +25,8 @@ type ReviewResult struct {
 	Suggestions []string      `json:"suggestions"`
 }
 
-// ParseVerdict normalizes free-form verdict strings from the LLM into one of
-// the two supported values. Unknown / empty verdicts default to
+// ParseVerdict normalizes free-form verdict strings from the reviewer into
+// one of the two supported values. Unknown / empty verdicts default to
 // REQUEST_CHANGES — the safer choice, because it forces another loop rather
 // than auto-approving an ambiguous review.
 func ParseVerdict(s string) ReviewVerdict {
@@ -41,51 +40,32 @@ func ParseVerdict(s string) ReviewVerdict {
 	}
 }
 
-// ReviewCard runs the LLM code-review prompt against the diff and returns a
-// normalized verdict. Empty diffs are treated as REQUEST_CHANGES because
-// nothing to review is itself a problem.
-func ReviewCard(ctx context.Context, client llm.Client, model string, card Card, diff string) (ReviewResult, error) {
-	if client == nil {
-		return ReviewResult{}, fmt.Errorf("review: llm client is nil")
-	}
-	if strings.TrimSpace(model) == "" {
-		return ReviewResult{}, fmt.Errorf("review: model is required")
-	}
-	if strings.TrimSpace(diff) == "" {
-		return ReviewResult{
-			Verdict:     ReviewRequestChanges,
-			Summary:     "No code changes found on the branch.",
-			Suggestions: []string{"Implement the requested changes — the diff is empty."},
-		}, nil
+// ReviewCard runs a Codegen reviewer agent against the worktree and returns
+// a normalized verdict. The reviewer is told it did NOT write this code
+// and is asked to be skeptical. Running inside worktreeDir lets it read
+// related files, follow imports, and run tests — far better than scoring
+// a diff blob in isolation.
+func ReviewCard(ctx context.Context, agent codegen.Agent, card Card, worktreeDir string) (ReviewResult, error) {
+	if agent == nil {
+		return ReviewResult{}, fmt.Errorf("review: codegen agent is nil")
 	}
 
-	prompt := buildReviewPrompt(card, diff)
-	raw, err := client.ChatCompletion(ctx, llm.CompletionRequest{
-		Model: model,
-		Messages: []llm.Message{
-			{Role: "user", Content: prompt},
-		},
-		Temperature: 0,
-	})
-	if err != nil {
-		return ReviewResult{}, fmt.Errorf("review: llm call: %w", err)
-	}
+	prompt := buildReviewPrompt(card)
 
 	var parsed struct {
 		Verdict     string   `json:"verdict"`
 		Summary     string   `json:"summary"`
 		Suggestions []string `json:"suggestions"`
 	}
-	if err := json.Unmarshal([]byte(llm.CleanJSON(raw)), &parsed); err != nil {
-		return ReviewResult{}, fmt.Errorf("review: parse llm json: %w (raw=%q)", err, raw)
+	if err := codegen.RunJSON(ctx, agent, prompt, worktreeDir, &parsed); err != nil {
+		return ReviewResult{}, fmt.Errorf("review: %w", err)
 	}
 
-	out := ReviewResult{
+	return ReviewResult{
 		Verdict:     ParseVerdict(parsed.Verdict),
 		Summary:     strings.TrimSpace(parsed.Summary),
 		Suggestions: cleanSuggestions(parsed.Suggestions),
-	}
-	return out, nil
+	}, nil
 }
 
 func cleanSuggestions(in []string) []string {

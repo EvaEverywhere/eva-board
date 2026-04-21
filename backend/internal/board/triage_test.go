@@ -1,20 +1,32 @@
 package board
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 
-func TestParseTriageProposals_Valid(t *testing.T) {
+// helper to drive the wire decoding the way the live AnalyzeBacklog
+// path does, then run the same filter step.
+func decodeAndFilter(t *testing.T, raw string, backlog []Card) []TriageProposal {
+	t.Helper()
+	var wire triageWire
+	if err := json.Unmarshal([]byte(raw), &wire); err != nil {
+		t.Fatalf("unmarshal triage wire: %v", err)
+	}
+	return filterTriageProposals(wire, backlog)
+}
+
+func TestFilterTriageProposals_Valid(t *testing.T) {
 	cardID := uuid.New()
 	backlog := []Card{{ID: cardID, Title: "old"}}
 
-	raw := "```json\n" + `{
+	raw := `{
   "proposals": [
     {"type": "create", "title": "Add retry logic", "description": "body", "acceptance_criteria": ["covered by tests", ""], "reason": "missing"},
     {"type": "close", "card_id": "` + cardID.String() + `", "reason": "done"},
@@ -23,12 +35,9 @@ func TestParseTriageProposals_Valid(t *testing.T) {
     {"type": "close", "card_id": "` + uuid.NewString() + `", "reason": "unknown card filtered"},
     {"type": "bogus", "title": "ignore me"}
   ]
-}` + "\n```"
+}`
 
-	got, err := parseTriageProposals(raw, backlog)
-	if err != nil {
-		t.Fatalf("parseTriageProposals: %v", err)
-	}
+	got := decodeAndFilter(t, raw, backlog)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 valid proposals, got %d: %+v", len(got), got)
 	}
@@ -46,31 +55,12 @@ func TestParseTriageProposals_Valid(t *testing.T) {
 	}
 }
 
-func TestParseTriageProposals_InvalidJSON(t *testing.T) {
-	if _, err := parseTriageProposals("not json", nil); err == nil {
-		t.Fatal("expected error on invalid json")
-	}
-}
-
-func TestParseTriageProposals_EmptyOK(t *testing.T) {
-	got, err := parseTriageProposals("", nil)
-	if err != nil {
-		t.Fatalf("empty input should not error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("empty input should yield no proposals, got %d", len(got))
-	}
-}
-
 func TestBuildTriagePrompt_IncludesCardsAndIssues(t *testing.T) {
 	id := uuid.New()
 	cards := []Card{{ID: id, Title: "Hello", Description: "World"}}
-	issues := []github.Issue{{Number: 42, Title: "Repo issue", Body: "body", UpdatedAt: time.Now()}}
+	issues := []github.Issue{{Number: 42, Title: "Repo issue", Body: "body"}}
 
-	got, err := buildTriagePrompt(cards, issues)
-	if err != nil {
-		t.Fatalf("buildTriagePrompt: %v", err)
-	}
+	got := buildTriagePrompt(cards, issues)
 	if !strings.Contains(got, id.String()) {
 		t.Error("prompt missing card id")
 	}
@@ -86,6 +76,9 @@ func TestBuildTriagePrompt_IncludesCardsAndIssues(t *testing.T) {
 	if !strings.Contains(got, "Current backlog cards") || !strings.Contains(got, "Repo open GitHub issues") {
 		t.Error("prompt missing section headers")
 	}
+	if !strings.Contains(got, "senior engineer triaging") {
+		t.Error("prompt missing reviewer framing — fakeCodegen reviewer detection relies on this")
+	}
 }
 
 func TestComposeDescription(t *testing.T) {
@@ -96,5 +89,28 @@ func TestComposeDescription(t *testing.T) {
 	}
 	if got := composeDescription("", nil); got != "" {
 		t.Fatalf("empty inputs should yield empty string, got %q", got)
+	}
+}
+
+// TestTriageService_AnalyzeBacklog_EndToEnd exercises the full path
+// from prompt through codegen to filtered proposals.
+func TestTriageService_AnalyzeBacklog_EndToEnd(t *testing.T) {
+	store := newFakeCardStore()
+	userID := uuid.New()
+	card := makeBacklogCard(store, userID)
+
+	resp := `{"proposals":[{"type":"rewrite","card_id":"` + card.ID.String() + `","title":"Better","reason":"vague"}]}`
+	fc := &fakeCodegen{reviewerOutputs: []string{resp}}
+	svc := NewTriageService(store, fc, TriageConfig{})
+
+	got, err := svc.AnalyzeBacklog(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("AnalyzeBacklog: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 proposal, got %d", len(got))
+	}
+	if got[0].Type != TriageProposalRewrite {
+		t.Errorf("type = %s, want rewrite", got[0].Type)
 	}
 }

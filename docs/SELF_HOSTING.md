@@ -32,10 +32,12 @@ You need **either** the Docker path or the from-source path:
   with `CODEGEN_AGENT=generic`.
 - A GitHub Personal Access Token with `repo` scope (per-user, stored
   encrypted at rest — see Section 3).
-- An [OpenRouter](https://openrouter.ai) API key (or any OpenAI-compatible
-  endpoint via `LLM_BASE_URL`).
 - `git` on `PATH` — the agent loop creates per-card git worktrees and
   refuses to start without it.
+
+The reviewer / verifier / triager all run through the same coding-agent CLI
+as the implementer (Codegen — Claude Code by default). There is no separate
+LLM provider to configure.
 
 ---
 
@@ -45,7 +47,7 @@ You need **either** the Docker path or the from-source path:
 git clone https://github.com/EvaEverywhere/eva-board.git
 cd eva-board
 cp .env.example .env
-# Edit .env — at minimum set LLM_API_KEY and TOKEN_ENCRYPTION_KEY
+# Edit .env — at minimum set TOKEN_ENCRYPTION_KEY
 make up
 # UI: http://localhost:8081 (run `make mobile-web` in another shell)
 # API: http://localhost:8080
@@ -94,11 +96,9 @@ The backend reads `.env` via `godotenv`. All defaults below match
 
 ### LLM
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `LLM_API_KEY` | yes | empty | OpenRouter (or compatible) API key used for verification + review. |
-| `LLM_MODEL` | no | `openai/gpt-4o-mini` | Model passed to the LLM client. |
-| `LLM_BASE_URL` | no | `https://openrouter.ai/api/v1` | OpenAI-compatible endpoint. Override to point at another provider. |
+Verification, review, and triage all run through the same Codegen agent
+that implements changes (Claude Code by default). Configure the agent
+under [Codegen](#codegen) below — there is no separate LLM provider.
 
 ### GitHub
 
