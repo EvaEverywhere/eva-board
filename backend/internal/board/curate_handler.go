@@ -22,7 +22,7 @@ import (
 // CurateHandler exposes triage, spring-clean, and combined curate
 // routes.
 type CurateHandler struct {
-	cards     *Service
+	cards     cardStore
 	settings  *SettingsService
 	llm       llm.Client
 	ghFactory github.ClientFactory
@@ -31,7 +31,7 @@ type CurateHandler struct {
 
 // NewCurateHandler builds a CurateHandler.
 func NewCurateHandler(
-	cards *Service,
+	cards cardStore,
 	settings *SettingsService,
 	llmClient llm.Client,
 	ghFactory github.ClientFactory,

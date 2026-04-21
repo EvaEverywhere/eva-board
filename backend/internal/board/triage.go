@@ -63,13 +63,13 @@ type TriageConfig struct {
 
 // TriageService produces TriageProposals via an LLM.
 type TriageService struct {
-	cards *Service
+	cards cardStore
 	llm   llm.Client
 	cfg   TriageConfig
 }
 
 // NewTriageService constructs a TriageService.
-func NewTriageService(cards *Service, llmClient llm.Client, cfg TriageConfig) *TriageService {
+func NewTriageService(cards cardStore, llmClient llm.Client, cfg TriageConfig) *TriageService {
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 0.2
 	}

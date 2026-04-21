@@ -32,15 +32,26 @@ import (
 
 // WebhookHandler dispatches GitHub webhook deliveries.
 type WebhookHandler struct {
-	cards  *Service
+	cards  cardStore
 	broker *Broker
 	secret string
+
+	// dispatchSync is true when callers (only tests today) need
+	// receive() to fully process the event before returning. The
+	// production path stays asynchronous so GitHub does not retry on
+	// slow downstream calls.
+	dispatchSync bool
 }
+
+// SetDispatchSyncForTest forces inline dispatch instead of the default
+// fire-and-forget goroutine. Tests use this to assert side effects
+// without polling.
+func (h *WebhookHandler) SetDispatchSyncForTest(b bool) { h.dispatchSync = b }
 
 // NewWebhookHandler builds a WebhookHandler. broker may be nil; secret
 // must be set or every request is rejected (treated as
 // misconfiguration, not implicit trust).
-func NewWebhookHandler(cards *Service, broker *Broker, secret string) *WebhookHandler {
+func NewWebhookHandler(cards cardStore, broker *Broker, secret string) *WebhookHandler {
 	return &WebhookHandler{cards: cards, broker: broker, secret: secret}
 }
 
@@ -65,7 +76,11 @@ func (h *WebhookHandler) receive(c *fiber.Ctx) error {
 	// background goroutine using a fresh context so the request
 	// returns immediately and GitHub does not retry on client-side
 	// slowness.
-	go h.dispatch(event)
+	if h.dispatchSync {
+		h.dispatch(event)
+	} else {
+		go h.dispatch(event)
+	}
 
 	return c.SendStatus(http.StatusOK)
 }

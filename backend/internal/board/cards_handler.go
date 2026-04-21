@@ -33,16 +33,37 @@ import (
 	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
+// AgentLifecycle is the slice of AgentManager that CardsHandler relies
+// on to start, stop, and feed the autonomous loop. Defining it as an
+// interface lets tests substitute a recording fake without spinning up
+// a real manager (which needs git on PATH, settings rows, etc.).
+// *AgentManager satisfies it directly.
+type AgentLifecycle interface {
+	StartAgent(ctx context.Context, cardID uuid.UUID) error
+	StopAgent(cardID uuid.UUID) error
+	SubmitFeedback(cardID uuid.UUID, feedback string) error
+}
+
+// AgentLifecycleFactory builds an AgentLifecycle for a given user. The
+// production factory hits the per-user settings row to produce a fresh
+// manager. Tests inject a recording factory.
+type AgentLifecycleFactory func(ctx context.Context, userID uuid.UUID) (AgentLifecycle, error)
+
 // CardsHandler exposes board card CRUD, move, and agent-lifecycle
 // routes.
 type CardsHandler struct {
-	cards     *Service
+	cards     cardStore
 	settings  *SettingsService
 	code      codegen.Agent
 	llm       llm.Client
 	ghFactory github.ClientFactory
 	broker    *Broker
 	llmModel  string
+
+	// agentFactory is set by tests via SetAgentFactory to substitute
+	// the real settings-driven AgentManager builder. nil means use the
+	// default buildAgentManager path.
+	agentFactory AgentLifecycleFactory
 }
 
 // NewCardsHandler builds a CardsHandler. broker may be nil (events are
@@ -51,7 +72,7 @@ type CardsHandler struct {
 // importable in builds that don't construct the full board stack
 // (e.g. test binaries).
 func NewCardsHandler(
-	cards *Service,
+	cards cardStore,
 	settings *SettingsService,
 	code codegen.Agent,
 	llmClient llm.Client,
@@ -357,23 +378,39 @@ func (h *CardsHandler) agentFeedback(c *fiber.Ctx) error {
 	if feedback == "" {
 		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "feedback is required"))
 	}
-	mgr, err := h.buildAgentManager(c.UserContext(), userID)
+	lc, err := h.resolveLifecycle(c.UserContext(), userID)
 	if err != nil {
 		return apperrors.Handle(c, err)
 	}
-	_ = mgr.SubmitFeedback(cardID, feedback)
+	_ = lc.SubmitFeedback(cardID, feedback)
 	return c.JSON(fiber.Map{"status": "queued"})
+}
+
+// SetAgentFactory replaces the default settings-driven AgentManager
+// builder with a custom factory. Intended for tests; production code
+// leaves this nil and goes through buildAgentManager.
+func (h *CardsHandler) SetAgentFactory(f AgentLifecycleFactory) {
+	h.agentFactory = f
+}
+
+// resolveLifecycle returns either the test-injected factory's
+// lifecycle or a freshly built AgentManager from settings.
+func (h *CardsHandler) resolveLifecycle(ctx context.Context, userID uuid.UUID) (AgentLifecycle, error) {
+	if h.agentFactory != nil {
+		return h.agentFactory(ctx, userID)
+	}
+	return h.buildAgentManager(ctx, userID)
 }
 
 // startAgentForCard builds a per-user AgentManager and starts the loop.
 // StartAgent is itself idempotent in the manager (no-op if a run is
 // already active for the card), so we don't gate here.
 func (h *CardsHandler) startAgentForCard(ctx context.Context, userID, cardID uuid.UUID) error {
-	mgr, err := h.buildAgentManager(ctx, userID)
+	lc, err := h.resolveLifecycle(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if err := mgr.StartAgent(ctx, cardID); err != nil {
+	if err := lc.StartAgent(ctx, cardID); err != nil {
 		return apperrors.New(http.StatusInternalServerError, "failed to start agent: "+err.Error())
 	}
 	return nil
@@ -389,11 +426,11 @@ func (h *CardsHandler) startAgentForCard(ctx context.Context, userID, cardID uui
 func (h *CardsHandler) stopAgentBestEffort(userID, cardID uuid.UUID) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	mgr, err := h.buildAgentManager(ctx, userID)
+	lc, err := h.resolveLifecycle(ctx, userID)
 	if err != nil {
 		return
 	}
-	_ = mgr.StopAgent(cardID)
+	_ = lc.StopAgent(cardID)
 }
 
 // buildAgentManager constructs a fresh AgentManager from the user's
