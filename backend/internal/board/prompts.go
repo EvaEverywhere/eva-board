@@ -1,0 +1,165 @@
+package board
+
+import (
+	"fmt"
+	"strings"
+)
+
+const maxFeedbackPromptChars = 6000
+
+// truncateForPrompt clips long feedback/diff blobs so the prompt does not blow
+// past sensible LLM context budgets.
+func truncateForPrompt(s string, max int) string {
+	trimmed := strings.TrimSpace(s)
+	if max <= 0 || len(trimmed) <= max {
+		return trimmed
+	}
+	return trimmed[:max] + "\n\n[... truncated ...]"
+}
+
+// buildAgentPrompt is the prompt fed to the coding agent CLI for an initial
+// run. Optional feedback (review feedback or user-submitted feedback) is
+// appended under a clearly labelled section.
+func buildAgentPrompt(card Card, feedback string) string {
+	var b strings.Builder
+	b.WriteString("You are an autonomous coding agent implementing a feature for the Eva Board project.\n\n")
+	fmt.Fprintf(&b, "## Issue: %s\n\n", card.Title)
+	if strings.TrimSpace(card.Description) != "" {
+		fmt.Fprintf(&b, "## Description\n%s\n\n", card.Description)
+	}
+	b.WriteString("## Instructions\n")
+	b.WriteString("1. Read and understand the relevant code before making changes.\n")
+	b.WriteString("2. Implement the feature following existing patterns in the codebase.\n")
+	b.WriteString("3. Write or update tests to cover your changes.\n")
+	b.WriteString("4. Run `go build ./...` and `go test ./...` to verify everything compiles and passes.\n")
+	b.WriteString("5. Commit your changes with a clear, descriptive commit message.\n")
+	b.WriteString("   Use conventional commits: feat:, fix:, refactor:, etc.\n")
+	b.WriteString("6. You may make multiple commits if the change is large.\n")
+
+	feedback = strings.TrimSpace(feedback)
+	if feedback != "" {
+		b.WriteString("\n## Review Feedback (must address)\n")
+		b.WriteString(truncateForPrompt(feedback, maxFeedbackPromptChars))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// buildVerifyPrompt asks the LLM to score the diff against acceptance criteria
+// and return a strict JSON verdict per criterion.
+func buildVerifyPrompt(card Card, criteria []string, diff string) string {
+	diff = truncateForPrompt(diff, 20000)
+
+	var criteriaList strings.Builder
+	for i, c := range criteria {
+		fmt.Fprintf(&criteriaList, "%d. %s\n", i+1, c)
+	}
+
+	return fmt.Sprintf(`You are a senior code reviewer verifying acceptance criteria.
+
+## Issue: %s
+
+## Description
+%s
+
+## Acceptance Criteria
+%s
+
+## Code Diff
+`+"```diff\n%s\n```"+`
+
+For EACH acceptance criterion above, determine if the code changes satisfy it.
+Output ONLY a JSON object with this exact structure:
+{
+  "verdicts": [
+    {"criterion": "the criterion text", "met": true|false, "reason": "brief explanation"}
+  ],
+  "summary": "Overall assessment of what was built and any gaps."
+}
+
+Rules:
+- "met": true means the criterion is fully satisfied by the diff
+- "met": false means it is missing, broken, or only partially addressed
+- Be strict — if the diff doesn't clearly implement a criterion, mark it false
+- Output valid JSON only, no markdown fences`,
+		card.Title, card.Description, criteriaList.String(), diff)
+}
+
+// buildReviewPrompt asks the LLM to review the diff for code quality and
+// return a strict JSON verdict (APPROVE / REQUEST_CHANGES) plus suggestions.
+func buildReviewPrompt(card Card, diff string) string {
+	diff = truncateForPrompt(diff, 15000)
+
+	return fmt.Sprintf(`You are reviewing code for a GitHub issue implementation.
+
+## Issue: %s
+
+## Description
+%s
+
+## Diff
+`+"```diff\n%s\n```"+`
+
+Evaluate:
+1. Correctness vs issue requirements
+2. Edge cases and regressions
+3. Test coverage expectations
+4. Security/risk
+
+Return STRICT JSON only with shape:
+{
+  "verdict": "APPROVE|REQUEST_CHANGES",
+  "summary": "short paragraph",
+  "suggestions": ["actionable change 1", "actionable change 2"]
+}
+
+Rules:
+- Use REQUEST_CHANGES when concrete fixes are required.
+- Keep suggestions concise and specific.
+- If verdict is APPROVE, suggestions may be empty.
+- Output valid JSON only (no markdown fences).`, card.Title, card.Description, diff)
+}
+
+// buildPRBody renders the PR body shown on GitHub after the loop succeeds.
+func buildPRBody(card Card, criteria []CriterionResult, review ReviewResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %s\n\n", card.Title)
+
+	if strings.TrimSpace(card.Description) != "" {
+		b.WriteString(card.Description)
+		b.WriteString("\n\n")
+	}
+
+	if len(criteria) > 0 {
+		b.WriteString("### Acceptance Criteria\n\n")
+		for _, c := range criteria {
+			box := "[ ]"
+			if c.Met {
+				box = "[x]"
+			}
+			fmt.Fprintf(&b, "- %s **%s** — %s\n", box, c.Criterion, c.Reason)
+		}
+		b.WriteString("\n")
+	}
+
+	if strings.TrimSpace(review.Summary) != "" {
+		b.WriteString("### Review Summary\n\n")
+		b.WriteString(review.Summary)
+		b.WriteString("\n\n")
+	}
+
+	if len(review.Suggestions) > 0 {
+		b.WriteString("### Reviewer Suggestions\n\n")
+		for _, s := range review.Suggestions {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s\n", s)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("---\n*Auto-generated by the Eva Board agent loop.*\n")
+	return b.String()
+}
