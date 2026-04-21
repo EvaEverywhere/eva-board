@@ -51,6 +51,9 @@ func (f *fakeGitHub) ListIssues(ctx context.Context, owner, repo string, opts gi
 func (f *fakeGitHub) CloseIssue(ctx context.Context, owner, repo string, number int) error {
 	panic("not implemented")
 }
+func (f *fakeGitHub) GetRepo(ctx context.Context, owner, name string) (*github.Repo, error) {
+	panic("not implemented")
+}
 func (f *fakeGitHub) GetUser(ctx context.Context) (*github.User, error) {
 	if f.getUserErr != nil {
 		return nil, f.getUserErr

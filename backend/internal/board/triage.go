@@ -56,6 +56,10 @@ type TriageConfig struct {
 	// when GitHub is non-nil.
 	RepoOwner string
 	RepoName  string
+	// RepoID scopes the cards.List/Create calls to a single board.
+	// Multi-repo support means a user can have many backlogs; triage
+	// runs against exactly one of them.
+	RepoID uuid.UUID
 }
 
 // TriageService produces TriageProposals via a Codegen reviewer agent.
@@ -81,7 +85,7 @@ func (s *TriageService) AnalyzeBacklog(ctx context.Context, userID uuid.UUID) ([
 		return nil, fmt.Errorf("triage requires a codegen agent")
 	}
 
-	backlog, err := s.cards.List(ctx, userID, ColumnBacklog)
+	backlog, err := s.cards.List(ctx, userID, s.cfg.RepoID, ColumnBacklog)
 	if err != nil {
 		return nil, fmt.Errorf("list backlog: %w", err)
 	}
@@ -121,7 +125,7 @@ func (s *TriageService) ApplyProposals(ctx context.Context, userID uuid.UUID, pr
 				return fmt.Errorf("create proposal missing title")
 			}
 			desc := composeDescription(p.Description, p.AcceptanceCriteria)
-			if _, err := s.cards.Create(ctx, userID, CreateRequest{Title: title, Description: desc}); err != nil {
+			if _, err := s.cards.Create(ctx, userID, s.cfg.RepoID, CreateRequest{Title: title, Description: desc}); err != nil {
 				return fmt.Errorf("apply create %q: %w", title, err)
 			}
 		case TriageProposalClose:

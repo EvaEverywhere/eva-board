@@ -32,6 +32,28 @@ func newTestService(t *testing.T) (*Service, *pgxpool.Pool) {
 	return New(pool), pool
 }
 
+// makeRepo seeds a board_repos row for the user and returns its ID.
+// Cards in the integration tests are scoped to a repo via the repo_id
+// FK; without this helper the tests would fail INSERT on the new
+// NOT-NULL-by-convention column.
+func makeRepo(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var idStr string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO board_repos (user_id, owner, name, repo_path, is_default)
+		VALUES ($1, $2, $3, $4, true)
+		RETURNING id::text
+	`, userID, "owner-"+uuid.NewString()[:8], "repo-"+uuid.NewString()[:8], "/tmp/repo").Scan(&idStr); err != nil {
+		t.Fatalf("insert board repo: %v", err)
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		t.Fatalf("parse repo id: %v", err)
+	}
+	return id
+}
+
 func makeUser(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -58,9 +80,10 @@ func makeUser(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 func TestCreateAndGet(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	card, err := svc.Create(ctx, user, CreateRequest{Title: "First card", Description: "hello"})
+	card, err := svc.Create(ctx, user, repo, CreateRequest{Title: "First card", Description: "hello"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -85,7 +108,7 @@ func TestCreateAndGet(t *testing.T) {
 		t.Fatalf("round trip mismatch: %+v vs %+v", got, card)
 	}
 
-	if _, err := svc.Create(ctx, user, CreateRequest{Title: "  "}); err != ErrTitleRequired {
+	if _, err := svc.Create(ctx, user, repo, CreateRequest{Title: "  "}); err != ErrTitleRequired {
 		t.Fatalf("expected ErrTitleRequired, got %v", err)
 	}
 }
@@ -93,16 +116,17 @@ func TestCreateAndGet(t *testing.T) {
 func TestListByColumn(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	a, _ := svc.Create(ctx, user, CreateRequest{Title: "a"})
-	b, _ := svc.Create(ctx, user, CreateRequest{Title: "b"})
-	c, _ := svc.Create(ctx, user, CreateRequest{Title: "c"})
+	a, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "a"})
+	b, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "b"})
+	c, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "c"})
 	if _, err := svc.Move(ctx, user, c.ID, ColumnDevelop, 0); err != nil {
 		t.Fatalf("move c: %v", err)
 	}
 
-	backlog, err := svc.List(ctx, user, ColumnBacklog)
+	backlog, err := svc.List(ctx, user, repo, ColumnBacklog)
 	if err != nil {
 		t.Fatalf("list backlog: %v", err)
 	}
@@ -113,7 +137,7 @@ func TestListByColumn(t *testing.T) {
 		t.Fatalf("backlog order wrong: %+v", backlog)
 	}
 
-	develop, err := svc.List(ctx, user, ColumnDevelop)
+	develop, err := svc.List(ctx, user, repo, ColumnDevelop)
 	if err != nil {
 		t.Fatalf("list develop: %v", err)
 	}
@@ -121,7 +145,7 @@ func TestListByColumn(t *testing.T) {
 		t.Fatalf("develop wrong: %+v", develop)
 	}
 
-	all, err := svc.List(ctx, user, "")
+	all, err := svc.List(ctx, user, repo, "")
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -129,7 +153,7 @@ func TestListByColumn(t *testing.T) {
 		t.Fatalf("expected 3 total cards, got %d", len(all))
 	}
 
-	if _, err := svc.List(ctx, user, "bogus"); err != ErrInvalidColumn {
+	if _, err := svc.List(ctx, user, repo, "bogus"); err != ErrInvalidColumn {
 		t.Fatalf("expected ErrInvalidColumn, got %v", err)
 	}
 }
@@ -137,17 +161,18 @@ func TestListByColumn(t *testing.T) {
 func TestMoveWithinColumn(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	a, _ := svc.Create(ctx, user, CreateRequest{Title: "a"})
-	b, _ := svc.Create(ctx, user, CreateRequest{Title: "b"})
-	c, _ := svc.Create(ctx, user, CreateRequest{Title: "c"})
+	a, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "a"})
+	b, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "b"})
+	c, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "c"})
 
 	if _, err := svc.Move(ctx, user, c.ID, ColumnBacklog, 0); err != nil {
 		t.Fatalf("move c to top: %v", err)
 	}
 
-	cards, err := svc.List(ctx, user, ColumnBacklog)
+	cards, err := svc.List(ctx, user, repo, ColumnBacklog)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -165,17 +190,18 @@ func TestMoveWithinColumn(t *testing.T) {
 func TestMoveBetweenColumns(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	a, _ := svc.Create(ctx, user, CreateRequest{Title: "a"})
-	b, _ := svc.Create(ctx, user, CreateRequest{Title: "b"})
-	c, _ := svc.Create(ctx, user, CreateRequest{Title: "c"})
+	a, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "a"})
+	b, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "b"})
+	c, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "c"})
 
 	if _, err := svc.Move(ctx, user, b.ID, ColumnReview, 0); err != nil {
 		t.Fatalf("move b: %v", err)
 	}
 
-	backlog, _ := svc.List(ctx, user, ColumnBacklog)
+	backlog, _ := svc.List(ctx, user, repo, ColumnBacklog)
 	if len(backlog) != 2 || backlog[0].ID != a.ID || backlog[1].ID != c.ID {
 		t.Fatalf("backlog after move wrong: %+v", backlog)
 	}
@@ -183,7 +209,7 @@ func TestMoveBetweenColumns(t *testing.T) {
 		t.Fatalf("expected c reindexed to 1, got %d", backlog[1].Position)
 	}
 
-	review, _ := svc.List(ctx, user, ColumnReview)
+	review, _ := svc.List(ctx, user, repo, ColumnReview)
 	if len(review) != 1 || review[0].ID != b.ID || review[0].Position != 0 {
 		t.Fatalf("review wrong: %+v", review)
 	}
@@ -192,9 +218,10 @@ func TestMoveBetweenColumns(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	card, _ := svc.Create(ctx, user, CreateRequest{Title: "old"})
+	card, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "old"})
 	newTitle := "new"
 	newDesc := "desc"
 	updated, err := svc.Update(ctx, user, card.ID, UpdateRequest{
@@ -216,11 +243,12 @@ func TestUpdate(t *testing.T) {
 func TestDelete(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	a, _ := svc.Create(ctx, user, CreateRequest{Title: "a"})
-	b, _ := svc.Create(ctx, user, CreateRequest{Title: "b"})
-	c, _ := svc.Create(ctx, user, CreateRequest{Title: "c"})
+	a, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "a"})
+	b, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "b"})
+	c, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "c"})
 
 	if err := svc.Delete(ctx, user, b.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -229,7 +257,7 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("expected ErrCardNotFound after delete, got %v", err)
 	}
 
-	cards, _ := svc.List(ctx, user, ColumnBacklog)
+	cards, _ := svc.List(ctx, user, repo, ColumnBacklog)
 	if len(cards) != 2 || cards[0].ID != a.ID || cards[1].ID != c.ID {
 		t.Fatalf("after delete order wrong: %+v", cards)
 	}
@@ -245,9 +273,10 @@ func TestDelete(t *testing.T) {
 func TestSetAgentStatus(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	card, _ := svc.Create(ctx, user, CreateRequest{Title: "a"})
+	card, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "a"})
 	for _, status := range []string{
 		AgentStatusRunning, AgentStatusVerifying, AgentStatusReviewing,
 		AgentStatusFailed, AgentStatusSucceeded, AgentStatusIdle,
@@ -269,14 +298,16 @@ func TestUserIsolation(t *testing.T) {
 	svc, pool := newTestService(t)
 	userA := makeUser(t, pool)
 	userB := makeUser(t, pool)
+	repoA := makeRepo(t, pool, userA)
+	repoB := makeRepo(t, pool, userB)
 	ctx := context.Background()
 
-	cardA, _ := svc.Create(ctx, userA, CreateRequest{Title: "A's card"})
+	cardA, _ := svc.Create(ctx, userA, repoA, CreateRequest{Title: "A's card"})
 
 	if _, err := svc.Get(ctx, userB, cardA.ID); err != ErrCardNotFound {
 		t.Fatalf("user B should not access A's card, got %v", err)
 	}
-	listB, err := svc.List(ctx, userB, "")
+	listB, err := svc.List(ctx, userB, repoB, "")
 	if err != nil {
 		t.Fatalf("list for B: %v", err)
 	}
@@ -294,9 +325,10 @@ func TestUserIsolation(t *testing.T) {
 func TestSetPRAndReviewAndMetadata(t *testing.T) {
 	svc, pool := newTestService(t)
 	user := makeUser(t, pool)
+	repo := makeRepo(t, pool, user)
 	ctx := context.Background()
 
-	card, _ := svc.Create(ctx, user, CreateRequest{Title: "x"})
+	card, _ := svc.Create(ctx, user, repo, CreateRequest{Title: "x"})
 	if err := svc.SetWorktreeBranch(ctx, card.ID, "feat/x"); err != nil {
 		t.Fatalf("set branch: %v", err)
 	}

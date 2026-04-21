@@ -74,8 +74,8 @@ func newCardsTestApp(t *testing.T, store cardStore, userID uuid.UUID, lc AgentLi
 		httputil.SetUserID(c, userID.String())
 		return c.Next()
 	})
-	h := NewCardsHandler(store, nil, nil, nil)
-	h.SetAgentFactory(func(ctx context.Context, _ uuid.UUID) (AgentLifecycle, error) {
+	h := NewCardsHandler(store, nil, nil, nil, nil)
+	h.SetAgentFactory(func(ctx context.Context, _, _ uuid.UUID) (AgentLifecycle, error) {
 		return lc, nil
 	})
 	h.Register(app)
@@ -86,6 +86,7 @@ func makeBacklogCard(store *fakeCardStore, userID uuid.UUID) *Card {
 	c := Card{
 		ID:          uuid.New(),
 		UserID:      userID,
+		RepoID:      uuid.New(),
 		Title:       "Some work",
 		Column:      ColumnBacklog,
 		AgentStatus: AgentStatusIdle,
@@ -98,6 +99,7 @@ func makeDevelopCard(store *fakeCardStore, userID uuid.UUID) *Card {
 	c := Card{
 		ID:          uuid.New(),
 		UserID:      userID,
+		RepoID:      uuid.New(),
 		Title:       "Active work",
 		Column:      ColumnDevelop,
 		AgentStatus: AgentStatusRunning,
@@ -227,8 +229,8 @@ func TestCardsHandler_StopHitsSameManagerInstance(t *testing.T) {
 	})
 
 	lc := &recordingLifecycle{}
-	h := NewCardsHandler(store, nil, nil, nil)
-	h.SetAgentFactory(func(_ context.Context, _ uuid.UUID) (AgentLifecycle, error) {
+	h := NewCardsHandler(store, nil, nil, nil, nil)
+	h.SetAgentFactory(func(_ context.Context, _, _ uuid.UUID) (AgentLifecycle, error) {
 		return lc, nil
 	})
 	h.Register(app)

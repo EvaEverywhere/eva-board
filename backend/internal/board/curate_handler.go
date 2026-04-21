@@ -24,20 +24,25 @@ import (
 type CurateHandler struct {
 	cards     cardStore
 	settings  *SettingsService
+	repos     *ReposService
 	agent     codegen.Agent
 	ghFactory github.ClientFactory
 }
 
-// NewCurateHandler builds a CurateHandler.
+// NewCurateHandler builds a CurateHandler. repos is used to scope
+// triage/curate to the user's default board until per-request repo
+// selection lands in PR-3.
 func NewCurateHandler(
 	cards cardStore,
 	settings *SettingsService,
+	repos *ReposService,
 	agent codegen.Agent,
 	ghFactory github.ClientFactory,
 ) *CurateHandler {
 	return &CurateHandler{
 		cards:     cards,
 		settings:  settings,
+		repos:     repos,
 		agent:     agent,
 		ghFactory: ghFactory,
 	}
@@ -153,19 +158,20 @@ func (h *CurateHandler) curate(c *fiber.Ctx) error {
 }
 
 func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID) (*TriageService, error) {
-	if h.settings == nil || h.agent == nil {
+	if h.settings == nil || h.agent == nil || h.repos == nil {
 		return nil, apperrors.New(http.StatusServiceUnavailable, "triage is not configured on this server")
 	}
-	st, err := h.settings.Get(ctx, userID)
+	repo, err := h.repos.GetDefault(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, apperrors.New(http.StatusBadRequest, "no default board repo configured for user")
 	}
 	cfg := TriageConfig{
-		WorkDir:   st.RepoPath,
-		RepoOwner: st.GitHubOwner,
-		RepoName:  st.GitHubRepo,
+		WorkDir:   repo.RepoPath,
+		RepoOwner: repo.Owner,
+		RepoName:  repo.Name,
+		RepoID:    repo.ID,
 	}
-	if h.ghFactory != nil && st.GitHubOwner != "" && st.GitHubRepo != "" {
+	if h.ghFactory != nil {
 		token, err := h.settings.GitHubToken(ctx, userID)
 		if err == nil && token != "" {
 			cfg.GitHub = h.ghFactory.NewClient(token)
@@ -175,21 +181,21 @@ func (h *CurateHandler) buildTriageService(ctx context.Context, userID uuid.UUID
 }
 
 func (h *CurateHandler) buildSpringCleanService(ctx context.Context, userID uuid.UUID) (*SpringCleanService, error) {
-	if h.settings == nil {
+	if h.settings == nil || h.repos == nil {
 		return nil, apperrors.New(http.StatusServiceUnavailable, "spring clean is not configured on this server")
 	}
-	st, err := h.settings.Get(ctx, userID)
+	repo, err := h.repos.GetDefault(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, apperrors.New(http.StatusBadRequest, "no default board repo configured for user")
 	}
 	cfg := SpringCleanConfig{
-		RepoOwner:    st.GitHubOwner,
-		RepoName:     st.GitHubRepo,
-		RepoPath:     st.RepoPath,
+		RepoOwner:    repo.Owner,
+		RepoName:     repo.Name,
+		RepoPath:     repo.RepoPath,
 		BranchPrefix: "eva-board/",
 	}
 	var ghClient github.Client
-	if h.ghFactory != nil && st.GitHubOwner != "" && st.GitHubRepo != "" {
+	if h.ghFactory != nil {
 		token, err := h.settings.GitHubToken(ctx, userID)
 		if err == nil && token != "" {
 			ghClient = h.ghFactory.NewClient(token)

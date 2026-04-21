@@ -73,6 +73,7 @@ func main() {
 	}
 	cardsSvc := board.New(core.Pool)
 	settingsSvc := board.NewSettingsService(core.Pool, core.Cipher, ghFactory)
+	reposSvc := board.NewReposService(core.Pool)
 
 	codegenDefaults := codegen.Config{
 		Type:           core.Cfg.CodegenAgent,
@@ -92,6 +93,7 @@ func main() {
 	// reach the same goroutine StartAgent kicked off.
 	agentRegistry := board.NewAgentRegistry(board.NewProductionManagerBuilder(board.AgentBuilderDeps{
 		Cards:           cardsSvc,
+		Repos:           reposSvc,
 		Settings:        settingsSvc,
 		GitHubClient:    ghFactory,
 		CodegenDefaults: codegenDefaults,
@@ -99,11 +101,12 @@ func main() {
 	}))
 
 	settingsHandler := board.NewSettingsHandler(settingsSvc, agentRegistry)
+	reposHandler := board.NewReposHandler(reposSvc, ghFactory, settingsSvc, agentRegistry)
 	cardsHandler := board.NewCardsHandler(
-		cardsSvc, settingsSvc, agentRegistry, boardBroker,
+		cardsSvc, settingsSvc, reposSvc, agentRegistry, boardBroker,
 	)
 	curateHandler := board.NewCurateHandler(
-		cardsSvc, settingsSvc, codegenAgent, ghFactory,
+		cardsSvc, settingsSvc, reposSvc, codegenAgent, ghFactory,
 	)
 	webhookHandler := board.NewWebhookHandler(cardsSvc, boardBroker, core.Cfg.GitHubWebhookSecret)
 
@@ -115,6 +118,7 @@ func main() {
 	api.Get("/me", authHandler.GetMe)
 	api.Get("/board/events", boardEventsHandler.Stream)
 	settingsHandler.Register(api)
+	reposHandler.Register(api)
 	cardsHandler.Register(api)
 	curateHandler.Register(api)
 

@@ -18,6 +18,7 @@ var (
 	ErrInvalidStatus   = errors.New("invalid agent status")
 	ErrTitleRequired   = errors.New("title is required")
 	ErrInvalidPosition = errors.New("invalid position")
+	ErrRepoRequired    = errors.New("repo id is required")
 )
 
 type Service struct {
@@ -29,15 +30,18 @@ func New(db *pgxpool.Pool) *Service {
 }
 
 const cardSelect = `
-	id::text, user_id::text, title, description, column_name, position,
+	id::text, user_id::text, COALESCE(repo_id::text, ''), title, description, column_name, position,
 	agent_status, worktree_branch, pr_number, pr_url, review_status,
 	metadata, created_at, updated_at
 `
 
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateRequest) (*Card, error) {
+func (s *Service) Create(ctx context.Context, userID, repoID uuid.UUID, req CreateRequest) (*Card, error) {
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		return nil, ErrTitleRequired
+	}
+	if repoID == uuid.Nil {
+		return nil, ErrRepoRequired
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -46,20 +50,24 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateReques
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Position is now scoped per (user, repo, column) so each board's
+	// columns get their own 0..N ordering. Without the repo scope,
+	// dropping a card into the develop column on board A would leave
+	// a gap on board B.
 	var nextPos int
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(MAX(position) + 1, 0)
 		FROM board_cards
-		WHERE user_id = $1 AND column_name = $2
-	`, userID, ColumnBacklog).Scan(&nextPos); err != nil {
+		WHERE user_id = $1 AND repo_id = $2 AND column_name = $3
+	`, userID, repoID, ColumnBacklog).Scan(&nextPos); err != nil {
 		return nil, fmt.Errorf("compute next position: %w", err)
 	}
 
 	row := tx.QueryRow(ctx, `
-		INSERT INTO board_cards (user_id, title, description, column_name, position)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO board_cards (user_id, repo_id, title, description, column_name, position)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING `+cardSelect+`
-	`, userID, title, strings.TrimSpace(req.Description), ColumnBacklog, nextPos)
+	`, userID, repoID, title, strings.TrimSpace(req.Description), ColumnBacklog, nextPos)
 
 	card, err := scanCardRow(row)
 	if err != nil {
@@ -118,16 +126,19 @@ func (s *Service) Get(ctx context.Context, userID, cardID uuid.UUID) (*Card, err
 	return card, err
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID, column string) ([]Card, error) {
+func (s *Service) List(ctx context.Context, userID, repoID uuid.UUID, column string) ([]Card, error) {
+	if repoID == uuid.Nil {
+		return nil, ErrRepoRequired
+	}
 	var rows pgx.Rows
 	var err error
 	if column == "" {
 		rows, err = s.db.Query(ctx, `
 			SELECT `+cardSelect+`
 			FROM board_cards
-			WHERE user_id = $1
+			WHERE user_id = $1 AND repo_id = $2
 			ORDER BY column_name, position, created_at
-		`, userID)
+		`, userID, repoID)
 	} else {
 		if !IsValidColumn(column) {
 			return nil, ErrInvalidColumn
@@ -135,9 +146,9 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, column string) ([]
 		rows, err = s.db.Query(ctx, `
 			SELECT `+cardSelect+`
 			FROM board_cards
-			WHERE user_id = $1 AND column_name = $2
+			WHERE user_id = $1 AND repo_id = $2 AND column_name = $3
 			ORDER BY position, created_at
-		`, userID, column)
+		`, userID, repoID, column)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list cards: %w", err)
@@ -211,17 +222,28 @@ func (s *Service) Move(ctx context.Context, userID, cardID uuid.UUID, toColumn s
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Move now also reads repo_id so the position-shift queries below
+	// stay scoped to the same board. Without that filter, moving a
+	// card on board A would silently re-number cards on board B.
 	var fromColumn string
 	var fromPosition int
+	var repoIDStr string
 	if err := tx.QueryRow(ctx, `
-		SELECT column_name, position FROM board_cards
+		SELECT column_name, position, COALESCE(repo_id::text, '') FROM board_cards
 		WHERE id = $1 AND user_id = $2
 		FOR UPDATE
-	`, cardID, userID).Scan(&fromColumn, &fromPosition); err != nil {
+	`, cardID, userID).Scan(&fromColumn, &fromPosition, &repoIDStr); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCardNotFound
 		}
 		return nil, fmt.Errorf("lock card: %w", err)
+	}
+	if repoIDStr == "" {
+		return nil, ErrRepoRequired
+	}
+	repoID, err := uuid.Parse(repoIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse card repo id: %w", err)
 	}
 
 	if fromColumn == toColumn {
@@ -240,8 +262,8 @@ func (s *Service) Move(ctx context.Context, userID, cardID uuid.UUID, toColumn s
 		var maxPos int
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(MAX(position), 0) FROM board_cards
-			WHERE user_id = $1 AND column_name = $2 AND id <> $3
-		`, userID, toColumn, cardID).Scan(&maxPos); err != nil {
+			WHERE user_id = $1 AND repo_id = $2 AND column_name = $3 AND id <> $4
+		`, userID, repoID, toColumn, cardID).Scan(&maxPos); err != nil {
 			return nil, fmt.Errorf("max pos: %w", err)
 		}
 		clampedPos := toPosition
@@ -253,20 +275,20 @@ func (s *Service) Move(ctx context.Context, userID, cardID uuid.UUID, toColumn s
 			if _, err := tx.Exec(ctx, `
 				UPDATE board_cards
 				SET position = position + 1, updated_at = now()
-				WHERE user_id = $1 AND column_name = $2
-				  AND id <> $3
-				  AND position >= $4 AND position < $5
-			`, userID, toColumn, cardID, clampedPos, fromPosition); err != nil {
+				WHERE user_id = $1 AND repo_id = $2 AND column_name = $3
+				  AND id <> $4
+				  AND position >= $5 AND position < $6
+			`, userID, repoID, toColumn, cardID, clampedPos, fromPosition); err != nil {
 				return nil, fmt.Errorf("shift down siblings: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `
 				UPDATE board_cards
 				SET position = position - 1, updated_at = now()
-				WHERE user_id = $1 AND column_name = $2
-				  AND id <> $3
-				  AND position > $4 AND position <= $5
-			`, userID, toColumn, cardID, fromPosition, clampedPos); err != nil {
+				WHERE user_id = $1 AND repo_id = $2 AND column_name = $3
+				  AND id <> $4
+				  AND position > $5 AND position <= $6
+			`, userID, repoID, toColumn, cardID, fromPosition, clampedPos); err != nil {
 				return nil, fmt.Errorf("shift up siblings: %w", err)
 			}
 		}
@@ -290,16 +312,16 @@ func (s *Service) Move(ctx context.Context, userID, cardID uuid.UUID, toColumn s
 	if _, err := tx.Exec(ctx, `
 		UPDATE board_cards
 		SET position = position - 1, updated_at = now()
-		WHERE user_id = $1 AND column_name = $2 AND position > $3
-	`, userID, fromColumn, fromPosition); err != nil {
+		WHERE user_id = $1 AND repo_id = $2 AND column_name = $3 AND position > $4
+	`, userID, repoID, fromColumn, fromPosition); err != nil {
 		return nil, fmt.Errorf("close source gap: %w", err)
 	}
 
 	var destMax int
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(MAX(position) + 1, 0) FROM board_cards
-		WHERE user_id = $1 AND column_name = $2
-	`, userID, toColumn).Scan(&destMax); err != nil {
+		WHERE user_id = $1 AND repo_id = $2 AND column_name = $3
+	`, userID, repoID, toColumn).Scan(&destMax); err != nil {
 		return nil, fmt.Errorf("dest max: %w", err)
 	}
 	clampedPos := toPosition
@@ -310,8 +332,8 @@ func (s *Service) Move(ctx context.Context, userID, cardID uuid.UUID, toColumn s
 	if _, err := tx.Exec(ctx, `
 		UPDATE board_cards
 		SET position = position + 1, updated_at = now()
-		WHERE user_id = $1 AND column_name = $2 AND position >= $3
-	`, userID, toColumn, clampedPos); err != nil {
+		WHERE user_id = $1 AND repo_id = $2 AND column_name = $3 AND position >= $4
+	`, userID, repoID, toColumn, clampedPos); err != nil {
 		return nil, fmt.Errorf("open dest slot: %w", err)
 	}
 
@@ -340,11 +362,12 @@ func (s *Service) Delete(ctx context.Context, userID, cardID uuid.UUID) error {
 
 	var column string
 	var position int
+	var repoIDStr string
 	if err := tx.QueryRow(ctx, `
-		SELECT column_name, position FROM board_cards
+		SELECT column_name, position, COALESCE(repo_id::text, '') FROM board_cards
 		WHERE id = $1 AND user_id = $2
 		FOR UPDATE
-	`, cardID, userID).Scan(&column, &position); err != nil {
+	`, cardID, userID).Scan(&column, &position, &repoIDStr); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCardNotFound
 		}
@@ -355,12 +378,22 @@ func (s *Service) Delete(ctx context.Context, userID, cardID uuid.UUID) error {
 		return fmt.Errorf("delete card: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, `
-		UPDATE board_cards
-		SET position = position - 1, updated_at = now()
-		WHERE user_id = $1 AND column_name = $2 AND position > $3
-	`, userID, column, position); err != nil {
-		return fmt.Errorf("close gap: %w", err)
+	// Close the gap only when we know the repo — orphan cards (no
+	// repo_id, possible from a partial 006 backfill) get deleted but
+	// don't trigger a re-numbering pass since there is no board to
+	// renumber.
+	if repoIDStr != "" {
+		repoID, perr := uuid.Parse(repoIDStr)
+		if perr != nil {
+			return fmt.Errorf("parse card repo id: %w", perr)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE board_cards
+			SET position = position - 1, updated_at = now()
+			WHERE user_id = $1 AND repo_id = $2 AND column_name = $3 AND position > $4
+		`, userID, repoID, column, position); err != nil {
+			return fmt.Errorf("close gap: %w", err)
+		}
 	}
 
 	return tx.Commit(ctx)
@@ -449,14 +482,16 @@ type rowScanner interface {
 
 func scanCardRow(r rowScanner) (*Card, error) {
 	var (
-		c          Card
-		idStr      string
-		userIDStr  string
-		rawMeta    []byte
+		c         Card
+		idStr     string
+		userIDStr string
+		repoIDStr string
+		rawMeta   []byte
 	)
 	if err := r.Scan(
 		&idStr,
 		&userIDStr,
+		&repoIDStr,
 		&c.Title,
 		&c.Description,
 		&c.Column,
@@ -482,6 +517,13 @@ func scanCardRow(r rowScanner) (*Card, error) {
 	}
 	c.ID = id
 	c.UserID = uid
+	if repoIDStr != "" {
+		rid, err := uuid.Parse(repoIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse repo id: %w", err)
+		}
+		c.RepoID = rid
+	}
 	if len(rawMeta) > 0 {
 		meta := map[string]any{}
 		if err := json.Unmarshal(rawMeta, &meta); err != nil {

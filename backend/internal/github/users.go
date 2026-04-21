@@ -16,12 +16,15 @@ type User struct {
 }
 
 // Repo is a repository the authenticated user can access. Only the fields
-// the board UI's repo picker needs are decoded.
+// the board UI's repo picker and the multi-repo settings flow need are
+// decoded.
 type Repo struct {
 	Name          string `json:"name"`
 	FullName      string `json:"full_name"`
 	DefaultBranch string `json:"default_branch"`
 	Private       bool   `json:"private"`
+	Description   string `json:"description"`
+	HTMLURL       string `json:"html_url"`
 	Owner         struct {
 		Login string `json:"login"`
 	} `json:"owner"`
@@ -45,6 +48,21 @@ func (c *HTTPClient) GetUser(ctx context.Context) (*User, error) {
 		return nil, err
 	}
 	return &u, nil
+}
+
+// GetRepo calls GET /repos/{owner}/{name}. Used by the multi-repo
+// settings flow to validate that a repo exists and that the stored
+// token can see it before persisting a board_repos row.
+func (c *HTTPClient) GetRepo(ctx context.Context, owner, name string) (*Repo, error) {
+	path, err := repoPath(owner, name)
+	if err != nil {
+		return nil, err
+	}
+	var r Repo
+	if err := c.do(ctx, "GET", path, nil, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ListUserRepos calls GET /user/repos. The board settings handler uses
