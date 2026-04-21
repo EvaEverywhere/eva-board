@@ -22,7 +22,9 @@ import (
 	"github.com/EvaEverywhere/eva-board/backend/internal/auth"
 	"github.com/EvaEverywhere/eva-board/backend/internal/board"
 	"github.com/EvaEverywhere/eva-board/backend/internal/bootstrap"
+	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
 	githubclient "github.com/EvaEverywhere/eva-board/backend/internal/github"
+	"github.com/EvaEverywhere/eva-board/backend/internal/llm"
 )
 
 func main() {
@@ -70,13 +72,43 @@ func main() {
 		BaseURL:   core.Cfg.GitHubAPIBaseURL,
 		UserAgent: "eva-board-server",
 	}
+	cardsSvc := board.New(core.Pool)
 	settingsSvc := board.NewSettingsService(core.Pool, core.Cipher, ghFactory)
 	settingsHandler := board.NewSettingsHandler(settingsSvc)
+
+	codegenAgent, err := codegen.NewAgent(codegen.Config{
+		Type:           core.Cfg.CodegenAgent,
+		Model:          core.Cfg.CodegenModel,
+		Timeout:        core.Cfg.CodegenTimeout,
+		MaxOutputBytes: core.Cfg.CodegenMaxOutputBytes,
+		Command:        core.Cfg.CodegenCommand,
+		Args:           core.Cfg.CodegenArgs,
+	})
+	if err != nil {
+		log.Fatalf("codegen init: %v", err)
+	}
+
+	llmClient := llm.NewClient(core.Cfg.LLMAPIKey, core.Cfg.LLMBaseURL)
+
+	cardsHandler := board.NewCardsHandler(
+		cardsSvc, settingsSvc, codegenAgent, llmClient, ghFactory,
+		boardBroker, core.Cfg.LLMModel,
+	)
+	curateHandler := board.NewCurateHandler(
+		cardsSvc, settingsSvc, llmClient, ghFactory, core.Cfg.LLMModel,
+	)
+	webhookHandler := board.NewWebhookHandler(cardsSvc, boardBroker, core.Cfg.GitHubWebhookSecret)
+
+	// Webhook routes intentionally live OUTSIDE the auth group —
+	// GitHub authenticates via X-Hub-Signature-256 HMAC.
+	webhookHandler.Register(app)
 
 	api := app.Group("/api", authMW.RequireAuth())
 	api.Get("/me", authHandler.GetMe)
 	api.Get("/board/events", boardEventsHandler.Stream)
 	settingsHandler.Register(api)
+	cardsHandler.Register(api)
+	curateHandler.Register(api)
 
 	errCh := make(chan error, 1)
 	go func() {
