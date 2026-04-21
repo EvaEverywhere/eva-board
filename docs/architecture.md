@@ -1,3 +1,8 @@
+---
+title: Architecture
+sidebar_position: 5
+---
+
 # Eva Board architecture
 
 Eva Board is a Go API (Fiber) plus an Expo web UI, backed by PostgreSQL,
@@ -40,9 +45,9 @@ worktrees are created on demand under `<RepoPath>/../worktrees/<short-id>/`.
 ## 2. The autonomous loop
 
 The loop is owned by `AgentManager` in
-[`backend/internal/board/agent.go`](../backend/internal/board/agent.go) and
+[`backend/internal/board/agent.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/agent.go) and
 executed by `runAgent` in
-[`backend/internal/board/agent_runner.go`](../backend/internal/board/agent_runner.go).
+[`backend/internal/board/agent_runner.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/agent_runner.go).
 A card is moved to `develop` (via the API or UI), which calls
 `AgentManager.StartAgent(cardID)`. That method is idempotent — only one run
 per card may exist at a time.
@@ -58,7 +63,7 @@ Each `StartAgent` spawns a goroutine that performs the following steps:
 2. **Initial coding-agent invocation.** `invokeCodingAgent` builds a prompt
    from the card (title, description, acceptance criteria, plus any queued
    feedback) and hands it to the configured `codegen.Agent`
-   ([`backend/internal/codegen/agent.go`](../backend/internal/codegen/agent.go)).
+   ([`backend/internal/codegen/agent.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/codegen/agent.go)).
    The CLI is forked with the worktree as its working directory and the
    prompt on stdin. Combined output is captured (default cap: 10 MiB).
 
@@ -72,13 +77,13 @@ Each `StartAgent` spawns a goroutine that performs the following steps:
    iteration: reload the card (so user edits to acceptance criteria are
    honoured), compute `git diff <base>...<branch>`, score it against the
    criteria with an LLM call (`verifyCard` in
-   [`backend/internal/board/verify.go`](../backend/internal/board/verify.go)).
+   [`backend/internal/board/verify.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/verify.go)).
    On `AllPassed`, exit the loop. Otherwise, re-invoke the coding agent
    with a "failed criteria" feedback string and repeat. Exhaustion → card
    ends in `failed` agent status.
 
 5. **Review loop** (≤ `MaxReviewCycles`, default 5). `ReviewCard`
-   ([`backend/internal/board/review.go`](../backend/internal/board/review.go))
+   ([`backend/internal/board/review.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/review.go))
    asks the LLM to verdict the diff as `APPROVE` or `REQUEST_CHANGES`. On
    `APPROVE`, break out. On `REQUEST_CHANGES`, re-invoke the agent with
    the suggestions, commit + push, **re-run the full verification loop**,
@@ -86,12 +91,12 @@ Each `StartAgent` spawns a goroutine that performs the following steps:
    is fatal — we don't ship code that no longer satisfies criteria.
 
 6. **Open PR.** `openPullRequest` posts to GitHub via
-   [`backend/internal/github/pulls.go`](../backend/internal/github/pulls.go),
+   [`backend/internal/github/pulls.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/github/pulls.go),
    persists `pr_number`/`pr_url` on the card, moves it to the `pr` column,
    and stamps `review_status = APPROVE`.
 
 7. **Webhook follow-up.** `WebhookHandler`
-   ([`backend/internal/board/webhook_handler.go`](../backend/internal/board/webhook_handler.go))
+   ([`backend/internal/board/webhook_handler.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/webhook_handler.go))
    listens for GitHub `pull_request` events. Merged → card moves to
    `done`; closed unmerged → card moves back to `review`.
 
@@ -103,7 +108,7 @@ useful while the loop is iterating.
 
 ## 3. Package map
 
-All packages live under [`backend/internal/`](../backend/internal/).
+All packages live under [`backend/internal/`](https://github.com/EvaEverywhere/eva-board/tree/main/backend/internal).
 
 | Package | One-liner |
 |---|---|
@@ -131,7 +136,7 @@ Entry points live under `backend/cmd/`:
 ## 4. Data model
 
 Migrations are numbered `.up.sql`/`.down.sql` pairs under
-[`backend/internal/db/migrations/`](../backend/internal/db/migrations/) and
+[`backend/internal/db/migrations/`](https://github.com/EvaEverywhere/eva-board/tree/main/backend/internal/db/migrations) and
 embedded into the binary via `embed.go`.
 
 | Table | Migration | Purpose |
@@ -164,14 +169,14 @@ agent_runner.go ──▶ Broker.Publish(Event)
                    Browser EventSource
 ```
 
-`Broker` ([`backend/internal/board/events.go`](../backend/internal/board/events.go))
+`Broker` ([`backend/internal/board/events.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/events.go))
 keeps a per-process subscriber map and a 256-event ring buffer for resume.
 Each subscriber has a 64-event channel; if a client falls behind, the
 oldest queued event for that subscriber is dropped silently rather than
 blocking the publisher.
 
 `EventsHandler.Stream`
-([`backend/internal/board/events_handler.go`](../backend/internal/board/events_handler.go))
+([`backend/internal/board/events_handler.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/events_handler.go))
 sets `text/event-stream`, honours `Last-Event-ID` for resume, sends a
 heartbeat comment every 15 s, and routes only events whose `UserID`
 matches the authenticated session — no cross-tenant fan-out.
@@ -187,14 +192,14 @@ Event types: `agent_started`, `agent_progress`, `agent_finished`,
 **Auth.** Email magic-link via the `magiclink-auth-go` library. Successful
 verification mints an HS256 JWT signed with `JWT_SECRET`. The JWT is
 attached as a bearer token by the Expo client; `auth.Middleware`
-([`backend/internal/auth/middleware.go`](../backend/internal/auth/middleware.go))
+([`backend/internal/auth/middleware.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/auth/middleware.go))
 verifies it and resolves an internal `user_id` per request. All `/api/*`
 routes are mounted behind `authMW.RequireAuth()` (see
-[`backend/cmd/server/main.go`](../backend/cmd/server/main.go)).
+[`backend/cmd/server/main.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/cmd/server/main.go)).
 
 **GitHub PATs.** Stored encrypted at rest using AES-GCM with a 32-byte key
 sourced from `TOKEN_ENCRYPTION_KEY`
-([`backend/internal/security/encryption.go`](../backend/internal/security/encryption.go)).
+([`backend/internal/security/encryption.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/security/encryption.go)).
 Plaintext only ever lives in memory while the agent loop is running and is
 never logged. Rotating the key invalidates all stored PATs and forces users
 to reconnect GitHub.
@@ -202,7 +207,7 @@ to reconnect GitHub.
 **Webhook deliveries.** `POST /webhooks/github` is mounted **outside** the
 auth middleware on purpose — GitHub authenticates with the
 `X-Hub-Signature-256` HMAC. `github.VerifySignature`
-([`backend/internal/github/webhook.go`](../backend/internal/github/webhook.go))
+([`backend/internal/github/webhook.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/github/webhook.go))
 constant-time-compares the delivered HMAC against `HMAC-SHA256(body,
 GITHUB_WEBHOOK_SECRET)`. Empty secret = misconfiguration → reject.
 
@@ -227,7 +232,7 @@ per-account. Features that have been deliberately deferred:
   via the curate handler. There is no separate `cmd/scheduler` cron
   process yet.
 - **Native mobile apps.** Native iOS and Android via Expo + EAS. See
-  [`docs/PHONE_DEV_SETUP.md`](PHONE_DEV_SETUP.md) for the simulator +
+  [`docs/mobile.md`](./mobile.md) for the simulator +
   device install path.
 - **Billing / metering.** No Stripe, no per-tenant LLM cost accounting.
 - **GDPR delete + export tooling.** `users` cascades to cards and

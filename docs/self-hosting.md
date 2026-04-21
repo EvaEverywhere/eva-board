@@ -1,3 +1,8 @@
+---
+title: Self-hosting
+sidebar_position: 4
+---
+
 # Self-hosting Eva Board
 
 Eva Board is a single-tenant, single-process Go API plus a static Expo web build.
@@ -74,7 +79,7 @@ openssl rand -base64 32
 ## 3. Required environment variables
 
 The backend reads `.env` via `godotenv`. All defaults below match
-[`backend/internal/config/config.go`](../backend/internal/config/config.go).
+[`backend/internal/config/config.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/config/config.go).
 
 ### Core
 
@@ -128,7 +133,7 @@ stored AES-GCM encrypted in `board_settings.github_token_encrypted` — it is
 > Codex, Aider, OpenHands, Cline, or a Custom command) those values are
 > persisted in `board_settings` and override the env defaults for that
 > user. The precedence rule lives in
-> [`backend/internal/board/cards_handler.go`](../backend/internal/board/cards_handler.go)
+> [`backend/internal/board/cards_handler.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/board/cards_handler.go)
 > (`resolveCodegenAgent`).
 
 ### Encryption
@@ -285,7 +290,7 @@ pg_restore --clean --if-exists \
     /var/backups/eva-board/2026-04-20.dump
 ```
 
-Tables that hold real state (see [`backend/internal/db/migrations/`](../backend/internal/db/migrations/)):
+Tables that hold real state (see [`backend/internal/db/migrations/`](https://github.com/EvaEverywhere/eva-board/tree/main/backend/internal/db/migrations)):
 
 - `users`, `auth_codes` — accounts and magic-link codes.
 - `board_cards` — card content, column, agent status, PR linkage.
@@ -323,7 +328,7 @@ means setting `Environment=PATH=...` (see Section 4) or symlinking into
 
 Any CLI that reads a prompt from stdin and makes file edits in its working
 directory works. The wrapper lives at
-[`backend/internal/codegen/generic.go`](../backend/internal/codegen/generic.go).
+[`backend/internal/codegen/generic.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/codegen/generic.go).
 
 ```bash
 CODEGEN_AGENT=generic
