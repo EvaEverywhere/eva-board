@@ -7,9 +7,11 @@
 
 Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop.
 
-## Demo
+## Screenshot
 
-> 📺 **Demo recording coming soon** — for now, see the [autonomous loop walkthrough](#how-it-works) below or jump to [Quickstart](#quickstart).
+![Eva Board — autonomous kanban with left sidebar, backlog cards with GitHub issue badges, and a PR column showing a succeeded agent run](docs/img/board-screenshot.png)
+
+> 📺 Full demo recording coming soon. See the [autonomous loop walkthrough](#how-it-works) below or jump to [Quickstart](#quickstart).
 
 ## How it works
 
