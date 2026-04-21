@@ -40,6 +40,19 @@ func (c *HTTPClient) AddIssueComment(ctx context.Context, owner, repo string, nu
 	return c.do(ctx, "POST", fmt.Sprintf("%s/issues/%d/comments", prefix, number), payload, nil)
 }
 
+// CloseIssue marks the given issue as closed (state: "closed").
+func (c *HTTPClient) CloseIssue(ctx context.Context, owner, repo string, number int) error {
+	prefix, err := repoPath(owner, repo)
+	if err != nil {
+		return err
+	}
+	if number <= 0 {
+		return fmt.Errorf("issue number must be positive")
+	}
+	payload := map[string]string{"state": "closed"}
+	return c.do(ctx, "PATCH", fmt.Sprintf("%s/issues/%d", prefix, number), payload, nil)
+}
+
 // ListIssues lists issues in a repository. When opts.ExcludePRs is true, the
 // pull-requests that GitHub returns from this endpoint are filtered out.
 func (c *HTTPClient) ListIssues(ctx context.Context, owner, repo string, opts ListIssuesOptions) ([]Issue, error) {
