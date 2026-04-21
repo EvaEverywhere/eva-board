@@ -6,14 +6,12 @@
 // agent; manual moves to `review` stop it; everything else is a plain
 // metadata update.
 //
-// AgentManager construction strategy (v1): the handler builds a fresh
-// AgentManager per request from the requesting user's settings. This is
-// intentionally simple — settings (RepoPath, GitHubOwner, GitHubRepo,
-// retry caps, GitHub PAT) are user-scoped and live in the
-// SettingsService, so building per-request keeps the wiring obvious and
-// avoids stale-token bugs. The cost is one DB read + token decrypt per
-// agent-touching request, which is fine at v1 scale. Future work: cache
-// per-user managers and invalidate on settings change.
+// AgentManager resolution: the handler delegates to an AgentRegistry
+// that caches managers per user (keyed by userID + a signature derived
+// from the user's settings). Caching is required so that StopAgent and
+// SubmitFeedback from a follow-up HTTP request reach the SAME manager
+// instance that owns the running goroutine — without it, those
+// operations target an empty in-memory state and silently no-op.
 package board
 
 import (
@@ -28,8 +26,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
-	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 
 // AgentLifecycle is the slice of AgentManager that CardsHandler relies
@@ -43,72 +39,41 @@ type AgentLifecycle interface {
 	SubmitFeedback(cardID uuid.UUID, feedback string) error
 }
 
-// AgentLifecycleFactory builds an AgentLifecycle for a given user. The
-// production factory hits the per-user settings row to produce a fresh
-// manager. Tests inject a recording factory.
+// AgentLifecycleFactory builds an AgentLifecycle for a given user.
+// Tests inject a recording factory; production goes through the
+// AgentRegistry on the handler.
 type AgentLifecycleFactory func(ctx context.Context, userID uuid.UUID) (AgentLifecycle, error)
 
 // CardsHandler exposes board card CRUD, move, and agent-lifecycle
 // routes.
 type CardsHandler struct {
-	cards     cardStore
-	settings  *SettingsService
-	code      codegen.Agent
-	ghFactory github.ClientFactory
-	broker    *Broker
-
-	// codegenDefaults captures the server-level CODEGEN_* env values.
-	// Per-user settings (board_settings.codegen_agent / codegen_command
-	// / codegen_args) override these when non-empty; otherwise these
-	// defaults flow into the per-request codegen.Agent built in
-	// buildAgentManager. The Type field also acts as the default when a
-	// user has not picked an agent.
-	codegenDefaults codegen.Config
-	// codegenFactory builds a per-user codegen.Agent from a Config.
-	// Defaults to codegen.NewAgent; tests inject a recorder.
-	codegenFactory func(codegen.Config) (codegen.Agent, error)
+	cards    cardStore
+	settings *SettingsService
+	registry *AgentRegistry
+	broker   *Broker
 
 	// agentFactory is set by tests via SetAgentFactory to substitute
-	// the real settings-driven AgentManager builder. nil means use the
-	// default buildAgentManager path.
+	// the registry-backed lifecycle resolution. nil means use the
+	// registry path.
 	agentFactory AgentLifecycleFactory
 }
 
-// NewCardsHandler builds a CardsHandler. broker may be nil (events are
-// best-effort), but the other deps must be non-nil for any agent route
-// to function. The handler does not pre-validate them so the package is
-// importable in builds that don't construct the full board stack
-// (e.g. test binaries).
+// NewCardsHandler builds a CardsHandler. broker and registry may be
+// nil in test binaries that don't exercise agent routes; settings is
+// required for the diff endpoint but agent routes will surface a 503
+// when registry is nil.
 func NewCardsHandler(
 	cards cardStore,
 	settings *SettingsService,
-	code codegen.Agent,
-	ghFactory github.ClientFactory,
+	registry *AgentRegistry,
 	broker *Broker,
 ) *CardsHandler {
 	return &CardsHandler{
-		cards:          cards,
-		settings:       settings,
-		code:           code,
-		ghFactory:      ghFactory,
-		broker:         broker,
-		codegenFactory: codegen.NewAgent,
+		cards:    cards,
+		settings: settings,
+		registry: registry,
+		broker:   broker,
 	}
-}
-
-// SetCodegenDefaults installs the server-level CODEGEN_* env values used
-// as fallbacks when a user has not configured per-user overrides.
-func (h *CardsHandler) SetCodegenDefaults(cfg codegen.Config) {
-	h.codegenDefaults = cfg
-}
-
-// SetCodegenFactory replaces the codegen.Agent constructor. Intended for
-// tests; production code leaves this at the default codegen.NewAgent.
-func (h *CardsHandler) SetCodegenFactory(f func(codegen.Config) (codegen.Agent, error)) {
-	if f == nil {
-		f = codegen.NewAgent
-	}
-	h.codegenFactory = f
 }
 
 // Register mounts the card routes onto r. The caller is responsible for
@@ -337,7 +302,9 @@ func (h *CardsHandler) move(c *fiber.Ctx) error {
 		}
 	case ColumnReview:
 		if fromColumn == ColumnDevelop {
-			h.stopAgentBestEffort(userID, cardID)
+			if err := h.stopAgent(c.UserContext(), userID, cardID); err != nil {
+				return apperrors.Handle(c, err)
+			}
 		}
 	}
 
@@ -374,7 +341,9 @@ func (h *CardsHandler) agentStop(c *fiber.Ctx) error {
 	if _, err := h.cards.Get(c.UserContext(), userID, cardID); err != nil {
 		return apperrors.Handle(c, mapCardError(err))
 	}
-	h.stopAgentBestEffort(userID, cardID)
+	if err := h.stopAgent(c.UserContext(), userID, cardID); err != nil {
+		return apperrors.Handle(c, err)
+	}
 	return c.JSON(fiber.Map{"status": "stopped"})
 }
 
@@ -406,25 +375,28 @@ func (h *CardsHandler) agentFeedback(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "queued"})
 }
 
-// SetAgentFactory replaces the default settings-driven AgentManager
-// builder with a custom factory. Intended for tests; production code
-// leaves this nil and goes through buildAgentManager.
+// SetAgentFactory replaces the registry-backed lifecycle resolution
+// with a custom factory. Intended for tests; production code leaves
+// this nil and goes through the AgentRegistry.
 func (h *CardsHandler) SetAgentFactory(f AgentLifecycleFactory) {
 	h.agentFactory = f
 }
 
 // resolveLifecycle returns either the test-injected factory's
-// lifecycle or a freshly built AgentManager from settings.
+// lifecycle or the registry-cached AgentManager for userID.
 func (h *CardsHandler) resolveLifecycle(ctx context.Context, userID uuid.UUID) (AgentLifecycle, error) {
 	if h.agentFactory != nil {
 		return h.agentFactory(ctx, userID)
 	}
-	return h.buildAgentManager(ctx, userID)
+	if h.registry == nil {
+		return nil, apperrors.New(http.StatusServiceUnavailable, "board agent is not configured on this server")
+	}
+	return h.registry.For(ctx, userID)
 }
 
-// startAgentForCard builds a per-user AgentManager and starts the loop.
-// StartAgent is itself idempotent in the manager (no-op if a run is
-// already active for the card), so we don't gate here.
+// startAgentForCard resolves the per-user manager from the registry
+// and starts the loop. StartAgent is idempotent inside the manager (no-op
+// if a run is already active for the card), so we don't gate here.
 func (h *CardsHandler) startAgentForCard(ctx context.Context, userID, cardID uuid.UUID) error {
 	lc, err := h.resolveLifecycle(ctx, userID)
 	if err != nil {
@@ -436,100 +408,18 @@ func (h *CardsHandler) startAgentForCard(ctx context.Context, userID, cardID uui
 	return nil
 }
 
-// stopAgentBestEffort cancels a running agent if one exists. Failures
-// are logged-by-omission (the manager itself never returns errors from
-// StopAgent today). We still build the manager because runs are tracked
-// inside it; in v1 each request constructs a fresh manager so there is
-// no shared run state to stop. This means HTTP-driven stops are mostly
-// symbolic until we cache managers per user — documented as a known
-// limitation; see package comment.
-func (h *CardsHandler) stopAgentBestEffort(userID, cardID uuid.UUID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+// stopAgent cancels a running agent for cardID. With the registry the
+// lookup hits the same manager instance that StartAgent used, so
+// cancellation actually reaches the running goroutine.
+func (h *CardsHandler) stopAgent(ctx context.Context, userID, cardID uuid.UUID) error {
 	lc, err := h.resolveLifecycle(ctx, userID)
 	if err != nil {
-		return
+		return err
 	}
-	_ = lc.StopAgent(cardID)
-}
-
-// buildAgentManager constructs a fresh AgentManager from the user's
-// stored settings. Returns a 400 AppError if settings are incomplete.
-func (h *CardsHandler) buildAgentManager(ctx context.Context, userID uuid.UUID) (*AgentManager, error) {
-	if h.settings == nil || h.ghFactory == nil || h.code == nil {
-		return nil, apperrors.New(http.StatusServiceUnavailable, "board agent is not configured on this server")
+	if err := lc.StopAgent(cardID); err != nil {
+		return apperrors.New(http.StatusInternalServerError, "failed to stop agent: "+err.Error())
 	}
-	st, err := h.settings.Get(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if st.GitHubOwner == "" || st.GitHubRepo == "" || st.RepoPath == "" {
-		return nil, apperrors.New(http.StatusBadRequest, "board settings incomplete: github_owner, github_repo, and repo_path are required")
-	}
-	token, err := h.settings.GitHubToken(ctx, userID)
-	if err != nil {
-		return nil, mapSettingsError(err)
-	}
-	code, err := h.resolveCodegenAgent(st)
-	if err != nil {
-		return nil, apperrors.New(http.StatusBadRequest, "invalid codegen configuration: "+err.Error())
-	}
-	gh := h.ghFactory.NewClient(token)
-	cfg := AgentConfig{
-		RepoOwner:           st.GitHubOwner,
-		RepoName:            st.GitHubRepo,
-		RepoPath:            st.RepoPath,
-		MaxVerifyIterations: st.MaxVerifyIterations,
-		MaxReviewCycles:     st.MaxReviewCycles,
-		GitHubToken:         token,
-	}
-	return NewAgentManager(h.cards, code, gh, cfg), nil
-}
-
-// resolveCodegenAgent layers per-user overrides onto the server defaults
-// and constructs a fresh codegen.Agent. Per-user values win when
-// non-empty; otherwise the server-level CODEGEN_* defaults apply. If
-// neither side has set anything new (i.e. the resolved Config matches
-// the server defaults exactly), the shared h.code instance is reused to
-// avoid spinning up a new agent per request.
-func (h *CardsHandler) resolveCodegenAgent(st Settings) (codegen.Agent, error) {
-	cfg := h.codegenDefaults
-
-	if v := strings.TrimSpace(st.CodegenAgent); v != "" {
-		cfg.Type = v
-	}
-	if v := strings.TrimSpace(st.CodegenCommand); v != "" {
-		cfg.Command = v
-	}
-	if len(st.CodegenArgs) > 0 {
-		cfg.Args = append([]string(nil), st.CodegenArgs...)
-	}
-
-	if codegenConfigEqual(cfg, h.codegenDefaults) && h.code != nil {
-		return h.code, nil
-	}
-	if h.codegenFactory == nil {
-		return codegen.NewAgent(cfg)
-	}
-	return h.codegenFactory(cfg)
-}
-
-func codegenConfigEqual(a, b codegen.Config) bool {
-	if a.Type != b.Type || a.Model != b.Model || a.Command != b.Command {
-		return false
-	}
-	if a.Timeout != b.Timeout || a.MaxOutputBytes != b.MaxOutputBytes {
-		return false
-	}
-	if len(a.Args) != len(b.Args) {
-		return false
-	}
-	for i := range a.Args {
-		if a.Args[i] != b.Args[i] {
-			return false
-		}
-	}
-	return true
+	return nil
 }
 
 // diff returns the git diff for the card's worktree branch against the

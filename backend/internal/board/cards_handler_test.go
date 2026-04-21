@@ -74,7 +74,7 @@ func newCardsTestApp(t *testing.T, store cardStore, userID uuid.UUID, lc AgentLi
 		httputil.SetUserID(c, userID.String())
 		return c.Next()
 	})
-	h := NewCardsHandler(store, nil, nil, nil, nil)
+	h := NewCardsHandler(store, nil, nil, nil)
 	h.SetAgentFactory(func(ctx context.Context, _ uuid.UUID) (AgentLifecycle, error) {
 		return lc, nil
 	})
@@ -209,12 +209,58 @@ func TestCardsHandler_MoveToOtherColumn_NoLifecycleHook(t *testing.T) {
 	}
 }
 
-// TestCardsHandler_PerUserCodegenOverride asserts that resolveCodegenAgent
+// TestCardsHandler_StopHitsSameManagerInstance is the regression test
+// that motivated AgentRegistry: a Move-into-develop request used to
+// build one manager, kick off a goroutine inside it, and discard the
+// reference; a follow-up agent/stop request would build a *different*
+// manager and call StopAgent on an empty map. With the registry both
+// requests resolve to the same lifecycle and the stop actually fires.
+func TestCardsHandler_StopHitsSameManagerInstance(t *testing.T) {
+	store := newFakeCardStore()
+	userID := uuid.New()
+	card := makeBacklogCard(store, userID)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		httputil.SetUserID(c, userID.String())
+		return c.Next()
+	})
+
+	lc := &recordingLifecycle{}
+	h := NewCardsHandler(store, nil, nil, nil)
+	h.SetAgentFactory(func(_ context.Context, _ uuid.UUID) (AgentLifecycle, error) {
+		return lc, nil
+	})
+	h.Register(app)
+
+	if resp := postMove(t, app, card.ID, ColumnDevelop); resp.StatusCode != http.StatusOK {
+		t.Fatalf("move→develop: expected 200, got %d", resp.StatusCode)
+	}
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/board/cards/"+card.ID.String()+"/agent/stop", nil)
+	stopResp, err := app.Test(stopReq, 5_000)
+	if err != nil {
+		t.Fatalf("agent/stop: %v", err)
+	}
+	if stopResp.StatusCode != http.StatusOK {
+		t.Fatalf("agent/stop: expected 200, got %d", stopResp.StatusCode)
+	}
+
+	if got := lc.Starts(); len(got) != 1 || got[0] != card.ID {
+		t.Fatalf("expected one StartAgent for %s, got %v", card.ID, got)
+	}
+	if got := lc.Stops(); len(got) != 1 || got[0] != card.ID {
+		t.Fatalf("expected one StopAgent for %s, got %v", card.ID, got)
+	}
+}
+
+// TestResolveCodegenAgent_PerUserOverride asserts that ResolveCodegenAgent
 // layers per-user board_settings on top of the server-level CODEGEN_*
 // defaults: a non-empty CodegenCommand from the user replaces the env
 // fallback, the user's CodegenAgent type wins, and unset fields fall
-// back to the defaults installed via SetCodegenDefaults.
-func TestCardsHandler_PerUserCodegenOverride(t *testing.T) {
+// back to the defaults. This used to live on CardsHandler before the
+// AgentRegistry refactor moved manager construction out of the handler.
+func TestResolveCodegenAgent_PerUserOverride(t *testing.T) {
 	defaults := codegen.Config{
 		Type:           "claude-code",
 		Command:        "default-cli",
@@ -260,54 +306,40 @@ func TestCardsHandler_PerUserCodegenOverride(t *testing.T) {
 		},
 	}
 
+	shared := nopAgent{}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewCardsHandler(nil, nil, nopAgent{}, nil, nil)
-			h.SetCodegenDefaults(defaults)
-
-			var got codegen.Config
-			h.SetCodegenFactory(func(cfg codegen.Config) (codegen.Agent, error) {
-				got = cfg
+			var built codegen.Config
+			factory := func(cfg codegen.Config) (codegen.Agent, error) {
+				built = cfg
 				return nopAgent{}, nil
-			})
-
-			if _, err := h.resolveCodegenAgent(tc.settings); err != nil {
-				t.Fatalf("resolveCodegenAgent: %v", err)
 			}
-
+			_, resolved, err := ResolveCodegenAgent(tc.settings, defaults, shared, factory)
+			if err != nil {
+				t.Fatalf("ResolveCodegenAgent: %v", err)
+			}
+			if resolved.Type != tc.wantType {
+				t.Fatalf("resolved.Type = %q, want %q", resolved.Type, tc.wantType)
+			}
+			if resolved.Command != tc.wantCommand {
+				t.Fatalf("resolved.Command = %q, want %q", resolved.Command, tc.wantCommand)
+			}
+			if !equalStrings(resolved.Args, tc.wantArgs) {
+				t.Fatalf("resolved.Args = %v, want %v", resolved.Args, tc.wantArgs)
+			}
 			// When the resolved config matches the defaults exactly the
-			// handler reuses the shared agent and the factory is never
-			// called — assert against the resolved-but-unbuilt state by
-			// reading defaults instead.
-			if !codegenConfigEqual(buildExpected(defaults, tc.settings), defaults) {
-				if got.Type != tc.wantType {
-					t.Fatalf("type = %q, want %q", got.Type, tc.wantType)
+			// shared agent is reused and the factory is never called.
+			if codegenConfigEqual(resolved, defaults) {
+				if built.Type != "" {
+					t.Fatalf("factory unexpectedly invoked when resolved == defaults")
 				}
-				if got.Command != tc.wantCommand {
-					t.Fatalf("command = %q, want %q", got.Command, tc.wantCommand)
-				}
-				if !equalStrings(got.Args, tc.wantArgs) {
-					t.Fatalf("args = %v, want %v", got.Args, tc.wantArgs)
+			} else {
+				if built.Type != tc.wantType {
+					t.Fatalf("factory built type = %q, want %q", built.Type, tc.wantType)
 				}
 			}
 		})
 	}
-}
-
-// buildExpected mirrors resolveCodegenAgent's layering so the test can
-// decide whether the factory was expected to fire.
-func buildExpected(defaults codegen.Config, st Settings) codegen.Config {
-	out := defaults
-	if st.CodegenAgent != "" {
-		out.Type = st.CodegenAgent
-	}
-	if st.CodegenCommand != "" {
-		out.Command = st.CodegenCommand
-	}
-	if len(st.CodegenArgs) > 0 {
-		out.Args = append([]string(nil), st.CodegenArgs...)
-	}
-	return out
 }
 
 func equalStrings(a, b []string) bool {

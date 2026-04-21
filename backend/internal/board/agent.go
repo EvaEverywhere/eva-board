@@ -190,6 +190,26 @@ func (m *AgentManager) SubmitFeedback(cardID uuid.UUID, feedback string) error {
 	return nil
 }
 
+// StopAll cancels every in-flight agent run owned by this manager.
+// Used by AgentRegistry when a stale manager is being evicted from the
+// cache so its goroutines unwind promptly instead of leaking.
+func (m *AgentManager) StopAll() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(m.runs))
+	for _, run := range m.runs {
+		if run.cancel != nil {
+			cancels = append(cancels, run.cancel)
+		}
+	}
+	m.mu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
+}
+
 // IsRunning reports whether an agent loop is active for the given card.
 func (m *AgentManager) IsRunning(cardID uuid.UUID) bool {
 	if m == nil {
