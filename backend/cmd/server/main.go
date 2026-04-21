@@ -59,6 +59,8 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
+	registerPublicRoutes(app)
+
 	app.Post("/auth/magic-link", fiberadapter.SendHandler(magicSvc))
 	app.Post("/auth/verify", fiberadapter.VerifyCodeHandler(magicSvc))
 	app.Get("/auth/verify", fiberadapter.VerifyLinkHandler(magicSvc))
