@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ExternalLink, Plus, Sparkles, X } from "lucide-react-native";
+import { ExternalLink, Plus, Sparkles, Trash2, X } from "lucide-react-native";
 
 import { CurateModal } from "@/components/CurateModal";
 import { RepoSwitcher } from "@/components/RepoSwitcher";
@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/Input";
 import { Text } from "@/components/ui/Text";
 import { useBoardEvents } from "@/hooks/useBoardEvents";
 import { useBoardRepos } from "@/hooks/useBoardRepos";
-import { createCard, listCards, moveCard } from "@/services/board";
+import { createCard, draftCard, listCards, moveCard } from "@/services/board";
 import {
   BOARD_COLUMN_LABELS,
   BOARD_COLUMNS,
@@ -309,6 +309,7 @@ export default function BoardScreen() {
         visible={showNewCard}
         onClose={() => setShowNewCard(false)}
         onCreate={handleCreateCard}
+        repoId={selectedRepo?.id}
       />
 
       <CurateModal
@@ -514,22 +515,89 @@ type NewCardModalProps = {
   visible: boolean;
   onClose: () => void;
   onCreate: (title: string, description: string) => Promise<void>;
+  repoId?: string;
 };
 
-function NewCardModal({ visible, onClose, onCreate }: NewCardModalProps) {
+// NewCardModal has two phases.
+//   idea: the user types a rough title + description and either hits
+//         Create (save raw, existing behavior) or Draft with AI (ask
+//         the codegen agent to expand it into a structured draft).
+//   edit: shown after Draft returns; user can tweak title, description
+//         and each AC row inline, or hit Try again to re-draft with
+//         the edited prompt. Save stitches the edited AC back into the
+//         description as markdown checkboxes so the existing verify.go
+//         pipeline picks them up unchanged.
+type NewCardPhase = "idea" | "edit";
+
+// composeDescription stitches the edited description and AC list back
+// into a single markdown body. It matches the format the backend
+// verify pipeline scans for ("- [ ] <item>"). When there are no AC
+// items we return the description untouched so "Create" from the idea
+// phase behaves exactly like before.
+function composeDescription(description: string, ac: string[]): string {
+  const items = ac.map((a) => a.trim()).filter(Boolean);
+  const body = description.trim();
+  if (items.length === 0) {
+    return body;
+  }
+  const checklist = items.map((a) => `- [ ] ${a}`).join("\n");
+  return body
+    ? `${body}\n\n## Acceptance criteria\n\n${checklist}`
+    : `## Acceptance criteria\n\n${checklist}`;
+}
+
+function NewCardModal({ visible, onClose, onCreate, repoId }: NewCardModalProps) {
+  const [phase, setPhase] = useState<NewCardPhase>("idea");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [criteria, setCriteria] = useState<string[]>([]);
+  const [reasoning, setReasoning] = useState("");
+  const [drafting, setDrafting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const reset = () => {
+  const reset = useCallback(() => {
+    setPhase("idea");
     setTitle("");
     setDescription("");
+    setCriteria([]);
+    setReasoning("");
     setError(null);
+    setDrafting(false);
     setSubmitting(false);
-  };
+  }, []);
 
-  const handleSubmit = async () => {
+  const handleClose = useCallback(() => {
+    reset();
+    onClose();
+  }, [onClose, reset]);
+
+  const runDraft = useCallback(async () => {
+    if (!title.trim()) {
+      setError("Title is required");
+      return;
+    }
+    setDrafting(true);
+    setError(null);
+    try {
+      const draft = await draftCard({
+        title: title.trim(),
+        description: description.trim(),
+        repo_id: repoId,
+      });
+      setTitle(draft.title);
+      setDescription(draft.description);
+      setCriteria(draft.acceptance_criteria ?? []);
+      setReasoning(draft.reasoning ?? "");
+      setPhase("edit");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to draft card");
+    } finally {
+      setDrafting(false);
+    }
+  }, [title, description, repoId]);
+
+  const handleCreateRaw = async () => {
     if (!title.trim()) {
       setError("Title is required");
       return;
@@ -546,12 +614,42 @@ function NewCardModal({ visible, onClose, onCreate }: NewCardModalProps) {
     }
   };
 
+  const handleSaveDraft = async () => {
+    if (!title.trim()) {
+      setError("Title is required");
+      return;
+    }
+    const composed = composeDescription(description, criteria);
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onCreate(title.trim(), composed);
+      reset();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create card");
+      setSubmitting(false);
+    }
+  };
+
+  const updateCriterion = (idx: number, value: string) => {
+    setCriteria((prev) => prev.map((c, i) => (i === idx ? value : c)));
+  };
+
+  const removeCriterion = (idx: number) => {
+    setCriteria((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const addCriterion = () => {
+    setCriteria((prev) => [...prev, ""]);
+  };
+
   return (
     <Modal
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <View
         className="flex-1 items-center justify-center p-4"
@@ -559,44 +657,146 @@ function NewCardModal({ visible, onClose, onCreate }: NewCardModalProps) {
       >
         <View
           className="w-full rounded-2xl border border-border bg-card p-5"
-          style={{ maxWidth: 480 }}
+          style={{ maxWidth: 520, maxHeight: "90%" }}
         >
           <View className="mb-4 flex-row items-center justify-between">
-            <Text variant="h4">New card</Text>
-            <Pressable onPress={onClose} accessibilityLabel="Close">
+            <Text variant="h4">
+              {phase === "idea" ? "New card" : "Edit draft"}
+            </Text>
+            <Pressable onPress={handleClose} accessibilityLabel="Close">
               <X size={18} color="#9AA4B2" />
             </Pressable>
           </View>
-          <View className="gap-3">
-            <Input
-              label="Title"
-              value={title}
-              onChangeText={setTitle}
-              placeholder="What needs doing?"
-              autoFocus
-            />
-            <Input
-              label="Description"
-              value={description}
-              onChangeText={setDescription}
-              placeholder="Optional details, acceptance criteria, links..."
-              multiline
-              numberOfLines={4}
-              style={{ minHeight: 96, textAlignVertical: "top" }}
-            />
+          <ScrollView
+            className="w-full"
+            contentContainerStyle={{ gap: 12 }}
+            keyboardShouldPersistTaps="handled"
+          >
             {error ? (
               <Text variant="small" className="text-destructive">
                 {error}
               </Text>
             ) : null}
-            <View className="mt-2 flex-row justify-end gap-2">
-              <Button variant="outline" size="sm" onPress={onClose}>
-                Cancel
-              </Button>
-              <Button size="sm" loading={submitting} onPress={handleSubmit}>
-                Create
-              </Button>
-            </View>
+            <Input
+              label="Title"
+              value={title}
+              onChangeText={setTitle}
+              placeholder={
+                phase === "idea" ? "What needs doing?" : "Card title"
+              }
+              autoFocus={phase === "idea"}
+            />
+            <Input
+              label="Description"
+              value={description}
+              onChangeText={setDescription}
+              placeholder={
+                phase === "idea"
+                  ? "Optional details, links..."
+                  : "Describe the work"
+              }
+              multiline
+              numberOfLines={phase === "edit" ? 6 : 4}
+              style={{
+                minHeight: phase === "edit" ? 120 : 96,
+                textAlignVertical: "top",
+              }}
+            />
+            {phase === "edit" ? (
+              <View className="gap-2">
+                {reasoning ? (
+                  <Text variant="small" className="italic text-muted">
+                    AI note: {reasoning}
+                  </Text>
+                ) : null}
+                <Text variant="small">Acceptance criteria</Text>
+                {criteria.map((criterion, idx) => (
+                  <View
+                    key={`ac-${idx}`}
+                    className="flex-row items-start gap-2"
+                  >
+                    <View className="flex-1">
+                      <Input
+                        value={criterion}
+                        onChangeText={(value) => updateCriterion(idx, value)}
+                        placeholder="X does Y when Z"
+                      />
+                    </View>
+                    <Pressable
+                      onPress={() => removeCriterion(idx)}
+                      className="h-11 w-11 items-center justify-center rounded-lg border border-border"
+                      accessibilityLabel={`Remove criterion ${idx + 1}`}
+                    >
+                      <Trash2 size={16} color="#9AA4B2" />
+                    </Pressable>
+                  </View>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onPress={addCriterion}
+                  icon={<Plus size={14} color="#F8FAFC" />}
+                >
+                  Add criterion
+                </Button>
+              </View>
+            ) : null}
+          </ScrollView>
+          <View className="mt-4 flex-row flex-wrap justify-end gap-2">
+            {phase === "idea" ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onPress={handleClose}
+                  disabled={drafting || submitting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={drafting}
+                  disabled={submitting}
+                  onPress={runDraft}
+                  icon={
+                    drafting ? undefined : (
+                      <Sparkles size={14} color="#F8FAFC" />
+                    )
+                  }
+                >
+                  {drafting ? "Drafting..." : "Draft with AI"}
+                </Button>
+                <Button
+                  size="sm"
+                  loading={submitting}
+                  disabled={drafting}
+                  onPress={handleCreateRaw}
+                >
+                  Create
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={drafting}
+                  disabled={submitting}
+                  onPress={runDraft}
+                >
+                  {drafting ? "Drafting..." : "Try again"}
+                </Button>
+                <Button
+                  size="sm"
+                  loading={submitting}
+                  disabled={drafting}
+                  onPress={handleSaveDraft}
+                >
+                  Save card
+                </Button>
+              </>
+            )}
           </View>
         </View>
       </View>

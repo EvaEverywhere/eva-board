@@ -53,6 +53,16 @@ export type CreateCardRequest = {
   description: string;
 };
 
+// CardDraft mirrors backend/internal/board.CardDraft. The UI shows the
+// draft in the New Card modal for inline editing before it is saved
+// via the normal create endpoint.
+export type CardDraft = {
+  title: string;
+  description: string;
+  acceptance_criteria: string[];
+  reasoning: string;
+};
+
 export type ListCardsOptions = {
   column?: BoardColumn;
   repoId?: string;
