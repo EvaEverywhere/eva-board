@@ -87,6 +87,24 @@ func (s *Service) GetByID(ctx context.Context, cardID uuid.UUID) (*Card, error) 
 	return card, err
 }
 
+// GetByPRNumber fetches a card by its associated GitHub PR number. The
+// lookup is global (not user-scoped) because GitHub webhook deliveries
+// don't carry a user identity — the (user_id) ownership comes from the
+// card itself once we've found it.
+func (s *Service) GetByPRNumber(ctx context.Context, prNumber int) (*Card, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT `+cardSelect+`
+		FROM board_cards
+		WHERE pr_number = $1
+		LIMIT 1
+	`, prNumber)
+	card, err := scanCardRow(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCardNotFound
+	}
+	return card, err
+}
+
 func (s *Service) Get(ctx context.Context, userID, cardID uuid.UUID) (*Card, error) {
 	row := s.db.QueryRow(ctx, `
 		SELECT `+cardSelect+`
