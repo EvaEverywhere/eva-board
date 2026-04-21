@@ -31,10 +31,10 @@ criteria, self-reviews its own diff, retries on failure, and creates the PR.
 1. Create a card with acceptance criteria
 2. Move to "Develop" — agent starts automatically
 3. Agent codes, commits, pushes
-4. Eva Board verifies against your acceptance criteria
-5. Eva Board reviews the diff for quality
-6. Failed? Agent retries with feedback (automatic)
-7. Passed? PR created on GitHub automatically
+4. The agent scores itself against your acceptance criteria
+5. A second agent session reviews the diff for quality — fresh context, no self-bias
+6. Failed either check? Agent retries with the feedback automatically
+7. Both pass? PR opened on GitHub automatically
 
 Plus autonomous backlog maintenance: triage analyzes your repo and proposes
 new issues; spring clean finds orphan branches and stale worktrees.
