@@ -30,7 +30,7 @@ dev-db: ## Start postgres + migrations only
 
 dev: dev-db ## Run API on host + Expo web
 	@trap 'kill 0' EXIT; \
-	(set -a; source backend/.env; set +a; cd backend && DATABASE_URL=postgres://postgres:postgres@localhost:5433/template_app?sslmode=disable go run ./cmd/server 2>&1 | sed 's/^/[api] /') & \
+	(set -a; source backend/.env; set +a; cd backend && DATABASE_URL=postgres://postgres:postgres@localhost:5433/eva_board?sslmode=disable go run ./cmd/server 2>&1 | sed 's/^/[api] /') & \
 	(cd mobile && EXPO_PUBLIC_API_URL=http://localhost:8080 npm run web 2>&1 | sed 's/^/[expo] /') & \
 	wait
 
@@ -50,7 +50,7 @@ migrate: ## Run migrations in Docker
 	$(COMPOSE) up migrate --no-deps
 
 db-shell: ## Open psql shell in postgres container
-	docker exec -it template-app-postgres psql -U postgres -d template_app
+	docker exec -it eva-board-postgres psql -U postgres -d eva_board
 
 db-reset: ## Recreate local database and rerun migrations
 	$(COMPOSE) down -v
@@ -68,7 +68,7 @@ mobile-install: ## Install mobile dependencies
 	npm install --prefix mobile
 
 seed: ## Create dev user token from local API
-	curl -s -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d '{"email":"dev@template.local","name":"Dev User"}'
+	curl -s -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d '{"email":"dev@evaboard.local","name":"Dev User"}'
 
 token: seed ## Alias for seed token command
 

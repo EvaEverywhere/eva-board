@@ -16,19 +16,19 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
   return {
     ...config,
-    name: "Template App",
-    slug: "template-app",
+    name: "Eva Board",
+    slug: "eva-board",
     version,
-    scheme: "templateapp",
+    scheme: "eva-board",
     userInterfaceStyle: "dark",
     orientation: "portrait",
     ios: {
-      bundleIdentifier: "com.teslashibe.templateapp",
+      bundleIdentifier: "com.evaeverywhere.evaboard",
       buildNumber: semverToBuildNumber(version),
       supportsTablet: true
     },
     android: {
-      package: "com.teslashibe.templateapp"
+      package: "com.evaeverywhere.evaboard"
     },
     plugins: ["expo-router", "expo-web-browser", "expo-secure-store"],
     experiments: {

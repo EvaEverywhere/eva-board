@@ -1,17 +1,17 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: template-app-postgres
+    container_name: eva-board-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: template_app
+      POSTGRES_DB: eva_board
     ports:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d template_app"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eva_board"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -24,7 +24,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/template_app?sslmode=disable
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/eva_board?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
       - ./backend/.env
     environment:
       PORT: "8080"
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/template_app?sslmode=disable
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/eva_board?sslmode=disable
       APP_URL: http://localhost:8080
     ports:
       - "8080:8080"

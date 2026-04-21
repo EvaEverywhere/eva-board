@@ -19,13 +19,13 @@ type Config struct {
 func Load() Config {
 	return Config{
 		Port:               getEnv("PORT", "8080"),
-		DatabaseURL:        getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5433/template_app?sslmode=disable"),
+		DatabaseURL:        getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5433/eva_board?sslmode=disable"),
 		JWTSecret:          getEnv("JWT_SECRET", "dev-secret-change-me-please-use-a-long-random-value"),
 		AppURL:             getEnv("APP_URL", "http://localhost:8080"),
 		CORSAllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:19006"),
 		ResendAPIKey:       strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
-		AuthEmailFrom:      getEnv("AUTH_EMAIL_FROM", "Template App <onboarding@example.com>"),
-		MobileAppScheme:    getEnv("MOBILE_APP_SCHEME", "templateapp"),
+		AuthEmailFrom:      getEnv("AUTH_EMAIL_FROM", "Eva Board <onboarding@example.com>"),
+		MobileAppScheme:    getEnv("MOBILE_APP_SCHEME", "eva-board"),
 	}
 }
 

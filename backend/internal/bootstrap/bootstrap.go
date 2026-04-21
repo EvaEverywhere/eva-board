@@ -6,8 +6,8 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/teslashibe/template-app/backend/internal/config"
-	"github.com/teslashibe/template-app/backend/internal/db"
+	"github.com/EvaEverywhere/eva-board/backend/internal/config"
+	"github.com/EvaEverywhere/eva-board/backend/internal/db"
 )
 
 type Core struct {

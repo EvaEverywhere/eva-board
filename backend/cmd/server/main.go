@@ -18,9 +18,9 @@ import (
 	magiclink "github.com/teslashibe/magiclink-auth-go"
 	"github.com/teslashibe/magiclink-auth-go/fiberadapter"
 
-	"github.com/teslashibe/template-app/backend/internal/apperrors"
-	"github.com/teslashibe/template-app/backend/internal/auth"
-	"github.com/teslashibe/template-app/backend/internal/bootstrap"
+	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
+	"github.com/EvaEverywhere/eva-board/backend/internal/auth"
+	"github.com/EvaEverywhere/eva-board/backend/internal/bootstrap"
 )
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 	authHandler := auth.NewHandler(authSvc)
 
 	app := fiber.New(fiber.Config{
-		AppName: "Template App API",
+		AppName: "Eva Board API",
 	})
 	app.Use(recover.New())
 	app.Use(logger.New())

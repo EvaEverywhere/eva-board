@@ -16,7 +16,7 @@ type AuthSessionContextValue = {
   getAccessToken: () => Promise<string | null>;
 };
 
-const TOKEN_KEY = "template_app_token";
+const TOKEN_KEY = "eva_board_token";
 
 const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
 

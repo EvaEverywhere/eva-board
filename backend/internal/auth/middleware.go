@@ -6,8 +6,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	magiclink "github.com/teslashibe/magiclink-auth-go"
 
-	"github.com/teslashibe/template-app/backend/internal/apperrors"
-	"github.com/teslashibe/template-app/backend/internal/httputil"
+	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
+	"github.com/EvaEverywhere/eva-board/backend/internal/httputil"
 )
 
 type Middleware struct {

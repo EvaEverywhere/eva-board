@@ -3,7 +3,7 @@ package httputil
 import (
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/teslashibe/template-app/backend/internal/apperrors"
+	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
 )
 
 const UserIDKey = "user_id"

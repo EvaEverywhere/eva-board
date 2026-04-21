@@ -1,4 +1,4 @@
-module github.com/teslashibe/template-app/backend
+module github.com/EvaEverywhere/eva-board/backend
 
 go 1.23.0
 

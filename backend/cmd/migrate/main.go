@@ -14,8 +14,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 
-	"github.com/teslashibe/template-app/backend/internal/config"
-	dbmigrations "github.com/teslashibe/template-app/backend/internal/db/migrations"
+	"github.com/EvaEverywhere/eva-board/backend/internal/config"
+	dbmigrations "github.com/EvaEverywhere/eva-board/backend/internal/db/migrations"
 )
 
 func main() {

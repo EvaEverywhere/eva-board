@@ -135,7 +135,7 @@ export default function WelcomeScreen() {
         </CardContent>
       </Card>
       <Text variant="muted" className="mt-4 text-center">
-        Template App uses passwordless authentication with short-lived verification codes.
+        Eva Board uses passwordless authentication with short-lived verification codes.
       </Text>
     </KeyboardAvoidingView>
   );
