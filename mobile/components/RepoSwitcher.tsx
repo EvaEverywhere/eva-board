@@ -50,6 +50,13 @@ export function RepoSwitcher({ repos, selected, onSelect, isLoading }: Props) {
       <Pressable
         className="flex-row items-center rounded-lg border border-border bg-card px-3 py-2"
         onPress={() => setOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={
+          selected
+            ? `Switch board, current repo ${selected.owner}/${selected.name}`
+            : "Pick a board repo"
+        }
+        accessibilityHint="Opens a list of your connected GitHub repos to switch boards"
       >
         <View className="flex-1">
           <Text variant="small" className="font-semibold">
