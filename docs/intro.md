@@ -10,8 +10,6 @@ sidebar_position: 1
 
 > 🍎 macOS · 📱 iOS · 🤖 Android · 🌐 Web · 🐳 Docker · ☁️ Self-hosted
 
-![Eva Board — kanban board with left sidebar, cards carrying GitHub issue badges, and an agent-succeeded PR column](img/board-screenshot.png)
-
 You create a card with acceptance criteria. The agent writes the code, scores
 itself against every criterion, then a second session reviews the diff with
 fresh context. Failed a check? It retries automatically. Passed both? A PR is
