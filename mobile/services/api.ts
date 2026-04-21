@@ -1,4 +1,4 @@
-import { API_URL } from "@/config";
+import { getServerUrl } from "@/services/serverUrl";
 
 type AccessTokenProvider = () => Promise<string | null>;
 
@@ -69,7 +69,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     resolvedHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_URL.replace(/\/+$/, "")}${path}`, {
+  const baseUrl = await getServerUrl();
+  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
     ...rest,
     headers: resolvedHeaders
   });

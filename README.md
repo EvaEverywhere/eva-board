@@ -61,6 +61,8 @@ make up
 
 Eva Board ships as a React Native app. To install on your phone and develop with hot-reload from your Mac, see [docs/PHONE_DEV_SETUP.md](docs/PHONE_DEV_SETUP.md).
 
+The backend URL can be changed at runtime from **Settings → Backend** in the app — no rebuild needed when switching between localhost, ngrok, or a deployed instance.
+
 ## Documentation
 
 - [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) — deploy with Docker Compose or a single binary, reverse proxy, backups, agent CLI setup, GitHub webhook setup.

@@ -5,6 +5,7 @@ import * as SecureStore from "expo-secure-store";
 
 import { getMe, sendMagicLink, type User, verifyCode } from "@/services/auth";
 import { setAccessTokenProvider } from "@/services/api";
+import { hydrateServerUrl } from "@/services/serverUrl";
 
 type AuthSessionContextValue = {
   isLoading: boolean;
@@ -104,6 +105,7 @@ export function AuthSessionProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     const hydrate = async () => {
       try {
+        await hydrateServerUrl();
         const token = await readStoredToken();
         if (!token || isTokenExpired(token)) {
           await clearSession();

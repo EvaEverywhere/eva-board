@@ -102,14 +102,26 @@ while keeping access to any native module in your `package.json`.
 
 ## Backend reachability
 
-Three ways to make the backend reachable from your phone. Pick one
-and pass the URL to Metro via `EXPO_PUBLIC_API_URL`.
+Three ways to make the backend reachable from your phone. Either set
+`EXPO_PUBLIC_API_URL` when building/starting Metro, **or** after
+launching the app go to **Settings → Backend**, paste the URL of your
+backend, and tap **Save**. The in-app override is persisted (in
+`expo-secure-store` on native, `localStorage` on web) and lets you
+switch between localhost / ngrok / production without rebuilding —
+useful on a phone where each EAS build is a 10–15 minute round-trip.
+
+The build-time `EXPO_PUBLIC_API_URL` remains the default; the in-app
+override wins when set, and **Reset to default** clears it.
 
 ### LAN (simplest, same WiFi)
+
+Build-time:
 
 ```bash
 EXPO_PUBLIC_API_URL=http://<mac-lan-ip>:8090 make phone-dev
 ```
+
+Or in the app: Settings → Backend → `http://<mac-lan-ip>:8090` → Save.
 
 Phone must be on the same WiFi as your Mac. Watch out for "guest"
 networks that block client-to-client traffic.
@@ -118,9 +130,12 @@ networks that block client-to-client traffic.
 
 ```bash
 make phone-tunnel
-# In another terminal:
+# In another terminal (build-time):
 EXPO_PUBLIC_API_URL=https://<random>.ngrok-free.app make phone-dev
 ```
+
+Or just paste the ngrok URL into Settings → Backend in the running
+app and tap Save — no Metro restart required.
 
 You also want to set the backend's `APP_URL` to the ngrok URL so
 magic-link emails point at a publicly reachable host.
@@ -128,11 +143,13 @@ magic-link emails point at a publicly reachable host.
 ### Deployed backend (always-on, no Mac required)
 
 Deploy the backend to your hosting of choice
-(see [SELF_HOSTING.md](SELF_HOSTING.md)) and point Metro at it:
+(see [SELF_HOSTING.md](SELF_HOSTING.md)) and either bake the URL in:
 
 ```bash
 EXPO_PUBLIC_API_URL=https://api.example.com make phone-dev
 ```
+
+…or set it from the app at Settings → Backend.
 
 ## Magic-link deep linking
 
