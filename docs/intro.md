@@ -1,7 +1,9 @@
 ---
-title: Introduction
+title: Autonomous dev board
+description: Builds, verifies, reviews, and ships code without you in the loop. Open-source, self-hostable, runs on macOS, iOS, Android, Web.
 slug: /
 sidebar_position: 1
+sidebar_label: Introduction
 ---
 
 # Eva Board

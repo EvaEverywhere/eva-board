@@ -21,6 +21,45 @@ const config: Config = {
 
   onBrokenLinks: 'warn',
 
+  headTags: [
+    {
+      tagName: 'meta',
+      attributes: {property: 'og:type', content: 'website'},
+    },
+    {
+      tagName: 'meta',
+      attributes: {property: 'og:site_name', content: 'EvaBoard'},
+    },
+    {
+      tagName: 'meta',
+      attributes: {property: 'og:image:width', content: '1200'},
+    },
+    {
+      tagName: 'meta',
+      attributes: {property: 'og:image:height', content: '630'},
+    },
+    {
+      tagName: 'meta',
+      attributes: {property: 'og:image:type', content: 'image/png'},
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        property: 'og:image:alt',
+        content:
+          'EvaBoard — autonomous dev board: Card → Code → Verify → Review → PR',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'twitter:image:alt',
+        content:
+          'EvaBoard — autonomous dev board: Card → Code → Verify → Review → PR',
+      },
+    },
+  ],
+
   markdown: {
     hooks: {
       onBrokenMarkdownLinks: 'warn',
@@ -55,7 +94,19 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/social-card.png',
+    metadata: [
+      {
+        name: 'description',
+        content:
+          'EvaBoard is an autonomous dev board: agents pick up cards, write code, verify, review, and open PRs without you in the loop. Open-source and self-hostable.',
+      },
+      {
+        name: 'keywords',
+        content:
+          'autonomous coding agent, AI dev board, kanban for AI, claude code, open source, eva board',
+      },
+    ],
     colorMode: {
       defaultMode: 'dark',
       disableSwitch: false,
