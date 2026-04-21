@@ -8,8 +8,9 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { ExternalLink, Plus, X } from "lucide-react-native";
+import { ExternalLink, Plus, Sparkles, X } from "lucide-react-native";
 
+import { CurateModal } from "@/components/CurateModal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Text } from "@/components/ui/Text";
@@ -62,6 +63,7 @@ export default function BoardScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showNewCard, setShowNewCard] = useState(false);
+  const [showCurate, setShowCurate] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -182,13 +184,23 @@ export default function BoardScreen() {
             </Text>
           ) : null}
         </View>
-        <Button
-          size="sm"
-          onPress={() => setShowNewCard(true)}
-          icon={<Plus size={16} color="#06070A" />}
-        >
-          New card
-        </Button>
+        <View className="flex-row items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onPress={() => setShowCurate(true)}
+            icon={<Sparkles size={16} color="#F8FAFC" />}
+          >
+            Curate
+          </Button>
+          <Button
+            size="sm"
+            onPress={() => setShowNewCard(true)}
+            icon={<Plus size={16} color="#06070A" />}
+          >
+            New card
+          </Button>
+        </View>
       </View>
 
       {dnd ? (
@@ -203,6 +215,15 @@ export default function BoardScreen() {
         visible={showNewCard}
         onClose={() => setShowNewCard(false)}
         onCreate={handleCreateCard}
+      />
+
+      <CurateModal
+        visible={showCurate}
+        onClose={() => setShowCurate(false)}
+        onApplied={() => {
+          void refresh();
+        }}
+        cards={cards}
       />
     </View>
   );
