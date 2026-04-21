@@ -1,12 +1,16 @@
 // useBoardRepos loads + caches the user's connected GitHub repos and
 // resolves which one is currently selected.
 //
-// Selection precedence on first load:
-//   1. initialRepoId arg (e.g. ?repo URL query param)
-//   2. The repo last selected in this browser (localStorage)
-//   3. The repo with is_default=true
-//   4. The first repo
-//   5. null when the user has zero repos
+// Selection precedence on first load (matches the candidate loop in
+// the resolve effect below):
+//   1. initialRepoId arg (e.g. ?repo URL query param) — URL wins so
+//      shared links land on the intended board.
+//   2. The current in-memory selectedId (preserves a prior in-session
+//      pick across re-renders / refetches).
+//   3. The repo last selected in this browser (localStorage).
+//   4. The repo with is_default=true.
+//   5. The first repo in the list.
+//   6. null when the user has zero repos.
 //
 // The hook returns the repos list, the current selection, a setter,
 // loading + error state, and a refetch handle. Persistence is web-only

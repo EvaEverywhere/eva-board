@@ -249,3 +249,63 @@ func TestAgentRegistry_BuilderError(t *testing.T) {
 		t.Fatalf("err = %v, want %v", err, want)
 	}
 }
+
+// TestAgentRegistry_BuilderErrorConcurrent verifies the singleflight
+// path when the builder fails: every concurrent waiter on the same key
+// must observe the same error, no goroutine should hang past the
+// builder's delay, and no partial entry must be written to the cache.
+func TestAgentRegistry_BuilderErrorConcurrent(t *testing.T) {
+	want := errors.New("boom")
+	fb := &fakeBuilder{err: want, delay: 50 * time.Millisecond}
+	r := NewAgentRegistry(fb.build)
+	uid := uuid.New()
+	rid := uuid.New()
+	ctx := context.Background()
+
+	const N = 16
+	var wg sync.WaitGroup
+	results := make([]*AgentManager, N)
+	errs := make([]error, N)
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			results[idx], errs[idx] = r.For(ctx, uid, rid)
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent For() callers did not all return; goroutine likely hung on a never-closed buildCall.done")
+	}
+
+	for i, e := range errs {
+		if !errors.Is(e, want) {
+			t.Fatalf("goroutine %d: err = %v, want %v", i, e, want)
+		}
+		if results[i] != nil {
+			t.Fatalf("goroutine %d: manager = %p, want nil on builder error", i, results[i])
+		}
+	}
+	if got := r.Snapshot(); len(got) != 0 {
+		t.Fatalf("cache must not retain a partial entry on builder error; snapshot = %v", got)
+	}
+
+	// A subsequent successful build (after clearing the error) must
+	// still work — i.e. the failed attempt didn't leave the building
+	// map in a broken state.
+	fb.err = nil
+	mgr, err := r.For(ctx, uid, rid)
+	if err != nil {
+		t.Fatalf("post-error For: %v", err)
+	}
+	if mgr == nil {
+		t.Fatal("post-error For: expected non-nil manager")
+	}
+}

@@ -26,6 +26,7 @@ package board
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 
 	"github.com/google/uuid"
@@ -157,6 +158,7 @@ func (r *AgentRegistry) Forget(userID uuid.UUID) {
 		delete(r.cache, k)
 	}
 	r.mu.Unlock()
+	log.Printf("board.AgentRegistry: Forget user=%s evicted=%d", userID, len(stale))
 	for _, mgr := range stale {
 		if mgr != nil {
 			mgr.StopAll()
@@ -178,6 +180,7 @@ func (r *AgentRegistry) ForgetRepo(userID, repoID uuid.UUID) {
 		delete(r.cache, key)
 	}
 	r.mu.Unlock()
+	log.Printf("board.AgentRegistry: ForgetRepo user=%s repo=%s evicted=%t", userID, repoID, ok)
 	if ok && entry.manager != nil {
 		entry.manager.StopAll()
 	}

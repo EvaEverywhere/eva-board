@@ -7,11 +7,14 @@
 // metadata update.
 //
 // AgentManager resolution: the handler delegates to an AgentRegistry
-// that caches managers per user (keyed by userID + a signature derived
-// from the user's settings). Caching is required so that StopAgent and
-// SubmitFeedback from a follow-up HTTP request reach the SAME manager
-// instance that owns the running goroutine — without it, those
-// operations target an empty in-memory state and silently no-op.
+// that caches managers per (user, repo), keyed by (userID, repoID)
+// plus a signature derived from the user's settings/credentials.
+// Multi-repo support means one user can drive several boards in
+// parallel, each with its own manager. Caching is required so that
+// StopAgent and SubmitFeedback from a follow-up HTTP request reach
+// the SAME manager instance that owns the running goroutine — without
+// it, those operations target an empty in-memory state and silently
+// no-op.
 package board
 
 import (

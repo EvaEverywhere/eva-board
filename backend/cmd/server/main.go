@@ -89,8 +89,9 @@ func main() {
 	}
 
 	// One AgentRegistry per process: it caches *board.AgentManager
-	// instances per user so Stop/Feedback from a follow-up HTTP request
-	// reach the same goroutine StartAgent kicked off.
+	// instances per (user, repo) so Stop/Feedback from a follow-up HTTP
+	// request reach the same goroutine StartAgent kicked off, even
+	// when a user has multiple boards running in parallel.
 	agentRegistry := board.NewAgentRegistry(board.NewProductionManagerBuilder(board.AgentBuilderDeps{
 		Cards:           cardsSvc,
 		Repos:           reposSvc,
