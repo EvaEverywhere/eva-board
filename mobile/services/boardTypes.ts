@@ -6,6 +6,22 @@
 
 export type BoardColumn = "backlog" | "develop" | "review" | "pr" | "done";
 
+export const BOARD_COLUMNS: readonly BoardColumn[] = [
+  "backlog",
+  "develop",
+  "review",
+  "pr",
+  "done",
+] as const;
+
+export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
+  backlog: "Backlog",
+  develop: "Develop",
+  review: "Review",
+  pr: "PR",
+  done: "Done",
+};
+
 export type AgentStatus =
   | "idle"
   | "running"
