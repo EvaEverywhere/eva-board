@@ -1,18 +1,18 @@
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { House, Settings } from "lucide-react-native";
+import { Columns3, Settings } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Text } from "@/components/ui/Text";
 
-const iconMap: Record<string, typeof House> = {
-  index: House,
+const iconMap: Record<string, typeof Columns3> = {
+  board: Columns3,
   settings: Settings
 };
 
 const labelMap: Record<string, string> = {
-  index: "Home",
+  board: "Board",
   settings: "Settings"
 };
 
@@ -32,9 +32,15 @@ export function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarP
           if (options.tabBarButton === null) {
             return null;
           }
+          // Tabs.Screen with `href: null` (e.g. our redirect index) is hidden
+          // from the tab bar via the iconMap lookup below — only known route
+          // names render an icon.
+          if (!iconMap[route.name]) {
+            return null;
+          }
 
           const isFocused = state.index === index;
-          const Icon = iconMap[route.name] ?? House;
+          const Icon = iconMap[route.name] ?? Columns3;
           const label = labelMap[route.name] ?? route.name;
 
           return (
