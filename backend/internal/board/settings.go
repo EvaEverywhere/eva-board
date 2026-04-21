@@ -2,6 +2,7 @@ package board
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,6 +27,8 @@ type Settings struct {
 	GitHubRepo          string    `json:"github_repo"`
 	RepoPath            string    `json:"repo_path"`
 	CodegenAgent        string    `json:"codegen_agent"`
+	CodegenCommand      string    `json:"codegen_command"`
+	CodegenArgs         []string  `json:"codegen_args"`
 	MaxVerifyIterations int       `json:"max_verify_iterations"`
 	MaxReviewCycles     int       `json:"max_review_cycles"`
 	HasGitHubToken      bool      `json:"has_github_token"`
@@ -40,6 +43,8 @@ type UpsertRequest struct {
 	GitHubRepo          *string
 	RepoPath            *string
 	CodegenAgent        *string
+	CodegenCommand      *string
+	CodegenArgs         *[]string
 	MaxVerifyIterations *int
 	MaxReviewCycles     *int
 }
@@ -81,6 +86,8 @@ const settingsSelect = `
 	COALESCE(github_repo, ''),
 	COALESCE(repo_path, ''),
 	codegen_agent,
+	COALESCE(codegen_command, ''),
+	COALESCE(codegen_args, '[]'::jsonb),
 	max_verify_iterations,
 	max_review_cycles,
 	updated_at
@@ -95,6 +102,7 @@ func (s *SettingsService) Get(ctx context.Context, userID uuid.UUID) (Settings, 
 		return Settings{
 			UserID:              userID,
 			CodegenAgent:        DefaultCodegenAgent,
+			CodegenArgs:         []string{},
 			MaxVerifyIterations: DefaultMaxVerifyIterations,
 			MaxReviewCycles:     DefaultMaxReviewCycles,
 		}, nil
@@ -160,6 +168,21 @@ func (s *SettingsService) Upsert(ctx context.Context, userID uuid.UUID, req Upse
 		}
 		current.CodegenAgent = agent
 	}
+	if req.CodegenCommand != nil {
+		current.CodegenCommand = strings.TrimSpace(*req.CodegenCommand)
+	}
+	if req.CodegenArgs != nil {
+		args := make([]string, 0, len(*req.CodegenArgs))
+		for _, a := range *req.CodegenArgs {
+			if v := strings.TrimSpace(a); v != "" {
+				args = append(args, v)
+			}
+		}
+		current.CodegenArgs = args
+	}
+	if current.CodegenArgs == nil {
+		current.CodegenArgs = []string{}
+	}
 	if req.MaxVerifyIterations != nil {
 		current.MaxVerifyIterations = *req.MaxVerifyIterations
 	}
@@ -170,23 +193,31 @@ func (s *SettingsService) Upsert(ctx context.Context, userID uuid.UUID, req Upse
 	const upsertSQL = `
 		INSERT INTO board_settings (
 			user_id, github_token_encrypted, github_owner, github_repo,
-			repo_path, codegen_agent, max_verify_iterations, max_review_cycles,
+			repo_path, codegen_agent, codegen_command, codegen_args,
+			max_verify_iterations, max_review_cycles,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 		ON CONFLICT (user_id) DO UPDATE SET
 			github_token_encrypted = CASE
-				WHEN $9 = 'set'   THEN EXCLUDED.github_token_encrypted
-				WHEN $9 = 'clear' THEN NULL
+				WHEN $11 = 'set'   THEN EXCLUDED.github_token_encrypted
+				WHEN $11 = 'clear' THEN NULL
 				ELSE board_settings.github_token_encrypted
 			END,
 			github_owner          = EXCLUDED.github_owner,
 			github_repo           = EXCLUDED.github_repo,
 			repo_path             = EXCLUDED.repo_path,
 			codegen_agent         = EXCLUDED.codegen_agent,
+			codegen_command       = EXCLUDED.codegen_command,
+			codegen_args          = EXCLUDED.codegen_args,
 			max_verify_iterations = EXCLUDED.max_verify_iterations,
 			max_review_cycles     = EXCLUDED.max_review_cycles,
 			updated_at            = now()
 		RETURNING ` + settingsSelect
+
+	argsJSON, err := json.Marshal(current.CodegenArgs)
+	if err != nil {
+		return Settings{}, fmt.Errorf("marshal codegen args: %w", err)
+	}
 
 	insertToken := nullableString(encryptedToken)
 	row := s.db.QueryRow(ctx, upsertSQL,
@@ -196,6 +227,8 @@ func (s *SettingsService) Upsert(ctx context.Context, userID uuid.UUID, req Upse
 		nullableString(current.GitHubRepo),
 		nullableString(current.RepoPath),
 		current.CodegenAgent,
+		nullableString(current.CodegenCommand),
+		argsJSON,
 		current.MaxVerifyIterations,
 		current.MaxReviewCycles,
 		string(tokenAction),
@@ -263,9 +296,10 @@ func nullableString(s string) any {
 
 func scanSettings(r rowScanner) (Settings, error) {
 	var (
-		st            Settings
-		userIDStr     string
-		encryptedTok  string
+		st           Settings
+		userIDStr    string
+		encryptedTok string
+		argsJSON     []byte
 	)
 	if err := r.Scan(
 		&userIDStr,
@@ -274,6 +308,8 @@ func scanSettings(r rowScanner) (Settings, error) {
 		&st.GitHubRepo,
 		&st.RepoPath,
 		&st.CodegenAgent,
+		&st.CodegenCommand,
+		&argsJSON,
 		&st.MaxVerifyIterations,
 		&st.MaxReviewCycles,
 		&st.UpdatedAt,
@@ -286,5 +322,14 @@ func scanSettings(r rowScanner) (Settings, error) {
 	}
 	st.UserID = id
 	st.HasGitHubToken = encryptedTok != ""
+	st.CodegenArgs = []string{}
+	if len(argsJSON) > 0 {
+		if err := json.Unmarshal(argsJSON, &st.CodegenArgs); err != nil {
+			return Settings{}, fmt.Errorf("unmarshal codegen args: %w", err)
+		}
+		if st.CodegenArgs == nil {
+			st.CodegenArgs = []string{}
+		}
+	}
 	return st, nil
 }

@@ -80,3 +80,6 @@ Backend reads `.env` via godotenv. Key variables:
 - **Commits**: conventional format (feat:/fix:/refactor:/docs:/chore:)
 - **Do NOT** add Co-Authored-By trailers
 - **Do NOT** modify git config
+- Per-user codegen agent settings override server env defaults — see
+  `internal/board/settings.go` and `cards_handler.go` for the precedence
+  rule (`resolveCodegenAgent`).

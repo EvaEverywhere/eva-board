@@ -75,14 +75,15 @@ func main() {
 	settingsSvc := board.NewSettingsService(core.Pool, core.Cipher, ghFactory)
 	settingsHandler := board.NewSettingsHandler(settingsSvc)
 
-	codegenAgent, err := codegen.NewAgent(codegen.Config{
+	codegenDefaults := codegen.Config{
 		Type:           core.Cfg.CodegenAgent,
 		Model:          core.Cfg.CodegenModel,
 		Timeout:        core.Cfg.CodegenTimeout,
 		MaxOutputBytes: core.Cfg.CodegenMaxOutputBytes,
 		Command:        core.Cfg.CodegenCommand,
 		Args:           core.Cfg.CodegenArgs,
-	})
+	}
+	codegenAgent, err := codegen.NewAgent(codegenDefaults)
 	if err != nil {
 		log.Fatalf("codegen init: %v", err)
 	}
@@ -90,6 +91,7 @@ func main() {
 	cardsHandler := board.NewCardsHandler(
 		cardsSvc, settingsSvc, codegenAgent, ghFactory, boardBroker,
 	)
+	cardsHandler.SetCodegenDefaults(codegenDefaults)
 	curateHandler := board.NewCurateHandler(
 		cardsSvc, settingsSvc, codegenAgent, ghFactory,
 	)
