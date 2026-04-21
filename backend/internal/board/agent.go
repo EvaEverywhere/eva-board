@@ -61,7 +61,7 @@ type AgentConfig struct {
 // AgentManager runs the autonomous loop for cards. The zero value is not
 // usable; construct via NewAgentManager.
 type AgentManager struct {
-	cards *Service
+	cards cardStore
 	code  codegen.Agent
 	gh    github.Client
 	llm   llm.Client
@@ -91,7 +91,7 @@ type agentRun struct {
 // NOT verify that the coding-agent CLI or git is available — startup checks
 // happen lazily inside StartAgent so a missing CLI fails loudly per-card
 // instead of silently disabling the whole feature.
-func NewAgentManager(cards *Service, code codegen.Agent, gh github.Client, llmClient llm.Client, cfg AgentConfig) *AgentManager {
+func NewAgentManager(cards cardStore, code codegen.Agent, gh github.Client, llmClient llm.Client, cfg AgentConfig) *AgentManager {
 	if cfg.BranchPrefix == "" {
 		cfg.BranchPrefix = "eva-board/"
 	}
