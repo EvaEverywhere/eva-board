@@ -26,6 +26,7 @@ type Client interface {
 	CreateIssue(ctx context.Context, owner, repo string, req CreateIssueRequest) (*Issue, error)
 	AddIssueComment(ctx context.Context, owner, repo string, number int, body string) error
 	ListIssues(ctx context.Context, owner, repo string, opts ListIssuesOptions) ([]Issue, error)
+	CloseIssue(ctx context.Context, owner, repo string, number int) error
 }
 
 // Options configure a new client.
