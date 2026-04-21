@@ -8,3 +8,11 @@
 - Prefer NativeWind `className` styling for component-level UI.
 - Keep design tokens in `theme/tokens.ts`.
 - Use `expo-secure-store` for native token storage and web fallback for browser.
+
+## Eva Board specifics
+
+- Board API client lives in `mobile/services/board.ts` (alongside the existing `api.ts`)
+- Live agent updates use SSE via `EventSource` (web) — wrap in a hook in `mobile/hooks/useBoardEvents.ts`
+- Board screens: `mobile/app/(app)/board.tsx` (kanban) and `mobile/app/(app)/board/[id].tsx` (card detail)
+- Settings includes GitHub PAT input, repo selector, and agent config
+- Web-first for v1 (`expo start --web`); native mobile screens come later
