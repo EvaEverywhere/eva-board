@@ -71,6 +71,22 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateReques
 	return card, nil
 }
 
+// GetByID fetches a card without enforcing user ownership. Intended for
+// system-internal callers like the autonomous agent loop, which is keyed on
+// card ID and runs outside of any HTTP request.
+func (s *Service) GetByID(ctx context.Context, cardID uuid.UUID) (*Card, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT `+cardSelect+`
+		FROM board_cards
+		WHERE id = $1
+	`, cardID)
+	card, err := scanCardRow(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCardNotFound
+	}
+	return card, err
+}
+
 func (s *Service) Get(ctx context.Context, userID, cardID uuid.UUID) (*Card, error) {
 	row := s.db.QueryRow(ctx, `
 		SELECT `+cardSelect+`
