@@ -3,7 +3,7 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'Eva Board',
+  title: 'EvaBoard',
   tagline:
     'Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop',
   favicon: 'img/favicon.ico',
@@ -62,9 +62,9 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'Eva Board',
+      title: 'EvaBoard',
       logo: {
-        alt: 'Eva Board',
+        alt: 'EvaBoard',
         src: 'img/logo.svg',
       },
       items: [
