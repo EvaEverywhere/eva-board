@@ -22,6 +22,7 @@ import (
 	"github.com/EvaEverywhere/eva-board/backend/internal/auth"
 	"github.com/EvaEverywhere/eva-board/backend/internal/board"
 	"github.com/EvaEverywhere/eva-board/backend/internal/bootstrap"
+	githubclient "github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 
 func main() {
@@ -65,9 +66,17 @@ func main() {
 	boardBroker := board.NewBroker()
 	boardEventsHandler := board.NewEventsHandler(boardBroker)
 
+	ghFactory := &githubclient.HTTPClientFactory{
+		BaseURL:   core.Cfg.GitHubAPIBaseURL,
+		UserAgent: "eva-board-server",
+	}
+	settingsSvc := board.NewSettingsService(core.Pool, core.Cipher, ghFactory)
+	settingsHandler := board.NewSettingsHandler(settingsSvc)
+
 	api := app.Group("/api", authMW.RequireAuth())
 	api.Get("/me", authHandler.GetMe)
 	api.Get("/board/events", boardEventsHandler.Stream)
+	settingsHandler.Register(api)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -27,6 +27,35 @@ type Client interface {
 	AddIssueComment(ctx context.Context, owner, repo string, number int, body string) error
 	ListIssues(ctx context.Context, owner, repo string, opts ListIssuesOptions) ([]Issue, error)
 	CloseIssue(ctx context.Context, owner, repo string, number int) error
+	GetUser(ctx context.Context) (*User, error)
+	ListUserRepos(ctx context.Context, opts ListUserReposOptions) ([]Repo, error)
+}
+
+// ClientFactory creates per-user GitHub clients with their own token. It
+// lets services that operate on behalf of multiple users (e.g. the board
+// settings service validating a user-supplied PAT) build a fresh client
+// per request without sharing tokens.
+type ClientFactory interface {
+	NewClient(token string) Client
+}
+
+// HTTPClientFactory is a ClientFactory that constructs HTTPClient
+// instances sharing a base URL and underlying *http.Client.
+type HTTPClientFactory struct {
+	BaseURL    string
+	HTTPClient *http.Client
+	UserAgent  string
+}
+
+// NewClient builds a Client authenticated with the given token, reusing
+// the factory's base URL / transport configuration.
+func (f *HTTPClientFactory) NewClient(token string) Client {
+	return New(Options{
+		Token:      token,
+		BaseURL:    f.BaseURL,
+		HTTPClient: f.HTTPClient,
+		UserAgent:  f.UserAgent,
+	})
 }
 
 // Options configure a new client.

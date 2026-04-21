@@ -21,6 +21,7 @@ type Config struct {
 	LLMBaseURL          string
 	GitHubAPIBaseURL    string
 	GitHubWebhookSecret string
+	TokenEncryptionKey  string
 
 	// Codegen agent configuration. See backend/internal/codegen for the
 	// pluggable agent interface that consumes these.
@@ -47,6 +48,7 @@ func Load() Config {
 		LLMBaseURL:            getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		GitHubAPIBaseURL:      getEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
 		GitHubWebhookSecret:   strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")),
+		TokenEncryptionKey:    strings.TrimSpace(os.Getenv("TOKEN_ENCRYPTION_KEY")),
 		CodegenAgent:          getEnv("CODEGEN_AGENT", "claude-code"),
 		CodegenModel:          strings.TrimSpace(os.Getenv("CODEGEN_MODEL")),
 		CodegenTimeout:        getDurationEnv("CODEGEN_TIMEOUT", 30*time.Minute),
