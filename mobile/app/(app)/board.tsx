@@ -131,6 +131,36 @@ export default function BoardScreen() {
     [router],
   );
 
+  // Native long-press → bottom sheet column picker. On web we let
+  // @hello-pangea/dnd own the move UX and skip wiring the sheet at
+  // all (long-press would conflict with click + drag detection).
+  const [moveTarget, setMoveTarget] = useState<BoardCard | null>(null);
+  const handleLongPress = useCallback((card: BoardCard) => {
+    if (Platform.OS === "web") return;
+    setMoveTarget(card);
+  }, []);
+
+  const handleMove = useCallback(
+    async (card: BoardCard, toColumn: BoardColumn) => {
+      setMoveTarget(null);
+      if (card.column === toColumn) return;
+      const previous = cards;
+      setCards((prev) =>
+        prev.map((c) =>
+          c.id === card.id ? { ...c, column: toColumn, position: 0 } : c,
+        ),
+      );
+      try {
+        await moveCard(card.id, { to_column: toColumn, to_position: 0 });
+        await refresh();
+      } catch (err) {
+        setCards(previous);
+        setError(err instanceof Error ? err.message : "Failed to move card");
+      }
+    },
+    [cards, refresh],
+  );
+
   const handleCreateCard = useCallback(
     async (title: string, description: string) => {
       if (!selectedRepo) return;
@@ -251,11 +281,29 @@ export default function BoardScreen() {
 
       {dnd ? (
         <dnd.DragDropContext onDragEnd={handleDragEnd}>
-          <ColumnsRow grouped={grouped} onOpen={openCard} onNewCard={() => setShowNewCard(true)} dnd={dnd} />
+          <ColumnsRow
+            grouped={grouped}
+            onOpen={openCard}
+            onLongPress={handleLongPress}
+            onNewCard={() => setShowNewCard(true)}
+            dnd={dnd}
+          />
         </dnd.DragDropContext>
       ) : (
-        <ColumnsRow grouped={grouped} onOpen={openCard} onNewCard={() => setShowNewCard(true)} dnd={null} />
+        <ColumnsRow
+          grouped={grouped}
+          onOpen={openCard}
+          onLongPress={handleLongPress}
+          onNewCard={() => setShowNewCard(true)}
+          dnd={null}
+        />
       )}
+
+      <MoveCardSheet
+        card={moveTarget}
+        onClose={() => setMoveTarget(null)}
+        onMove={handleMove}
+      />
 
       <NewCardModal
         visible={showNewCard}
@@ -279,11 +327,12 @@ export default function BoardScreen() {
 type ColumnsRowProps = {
   grouped: Record<BoardColumn, BoardCard[]>;
   onOpen: (id: string) => void;
+  onLongPress: (card: BoardCard) => void;
   onNewCard: () => void;
   dnd: DndModule | null;
 };
 
-function ColumnsRow({ grouped, onOpen, onNewCard, dnd }: ColumnsRowProps) {
+function ColumnsRow({ grouped, onOpen, onLongPress, onNewCard, dnd }: ColumnsRowProps) {
   return (
     <ScrollView
       horizontal
@@ -297,6 +346,7 @@ function ColumnsRow({ grouped, onOpen, onNewCard, dnd }: ColumnsRowProps) {
           column={col}
           cards={grouped[col]}
           onOpen={onOpen}
+          onLongPress={onLongPress}
           onNewCard={col === "backlog" ? onNewCard : undefined}
           dnd={dnd}
         />
@@ -309,11 +359,12 @@ type ColumnProps = {
   column: BoardColumn;
   cards: BoardCard[];
   onOpen: (id: string) => void;
+  onLongPress: (card: BoardCard) => void;
   onNewCard?: () => void;
   dnd: DndModule | null;
 };
 
-function Column({ column, cards, onOpen, onNewCard, dnd }: ColumnProps) {
+function Column({ column, cards, onOpen, onLongPress, onNewCard, dnd }: ColumnProps) {
   const header = (
     <View className="mb-3 flex-row items-center justify-between">
       <View className="flex-row items-center gap-2">
@@ -368,7 +419,11 @@ function Column({ column, cards, onOpen, onNewCard, dnd }: ColumnProps) {
                       {...(dragProvided.draggableProps as object)}
                       {...(dragProvided.dragHandleProps as object)}
                     >
-                      <BoardCardView card={card} onOpen={onOpen} />
+                      <BoardCardView
+                        card={card}
+                        onOpen={onOpen}
+                        onLongPress={onLongPress}
+                      />
                     </View>
                   )}
                 </Draggable>
@@ -390,7 +445,12 @@ function Column({ column, cards, onOpen, onNewCard, dnd }: ColumnProps) {
       {header}
       <View style={{ gap: 8 }}>
         {cards.map((card) => (
-          <BoardCardView key={card.id} card={card} onOpen={onOpen} />
+          <BoardCardView
+            key={card.id}
+            card={card}
+            onOpen={onOpen}
+            onLongPress={onLongPress}
+          />
         ))}
         {empty}
       </View>
@@ -398,11 +458,21 @@ function Column({ column, cards, onOpen, onNewCard, dnd }: ColumnProps) {
   );
 }
 
-function BoardCardView({ card, onOpen }: { card: BoardCard; onOpen: (id: string) => void }) {
+function BoardCardView({
+  card,
+  onOpen,
+  onLongPress,
+}: {
+  card: BoardCard;
+  onOpen: (id: string) => void;
+  onLongPress: (card: BoardCard) => void;
+}) {
   const status = STATUS_COLORS[card.agent_status] ?? STATUS_COLORS.idle;
   return (
     <Pressable
       onPress={() => onOpen(card.id)}
+      onLongPress={() => onLongPress(card)}
+      delayLongPress={350}
       className="rounded-xl border border-border bg-card p-3 active:opacity-80"
     >
       <Text variant="small" numberOfLines={2} className="font-semibold">
@@ -530,6 +600,80 @@ function NewCardModal({ visible, onClose, onCreate }: NewCardModalProps) {
           </View>
         </View>
       </View>
+    </Modal>
+  );
+}
+
+type MoveCardSheetProps = {
+  card: BoardCard | null;
+  onClose: () => void;
+  onMove: (card: BoardCard, toColumn: BoardColumn) => void;
+};
+
+// MoveCardSheet is the native replacement for drag-and-drop. We use a
+// shared Modal-based picker for both iOS and Android (rather than
+// platform-specific ActionSheetIOS) so the styling matches the rest of
+// the app and we have one code path to maintain.
+function MoveCardSheet({ card, onClose, onMove }: MoveCardSheetProps) {
+  const visible = card !== null;
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable
+        className="flex-1 justify-end"
+        style={{ backgroundColor: "rgba(6,7,10,0.7)" }}
+        onPress={onClose}
+      >
+        <Pressable
+          className="rounded-t-2xl border-t border-border bg-card p-4"
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View className="mb-3 flex-row items-center justify-between">
+            <Text variant="h4" numberOfLines={1} className="flex-1 pr-3">
+              {card?.title ?? "Move card"}
+            </Text>
+            <Pressable onPress={onClose} accessibilityLabel="Close">
+              <X size={18} color="#9AA4B2" />
+            </Pressable>
+          </View>
+          <View className="gap-2">
+            {BOARD_COLUMNS.map((col) => {
+              const isCurrent = card?.column === col;
+              return (
+                <Pressable
+                  key={col}
+                  disabled={isCurrent}
+                  onPress={() => card && onMove(card, col)}
+                  className="rounded-xl border border-border bg-secondary p-3 active:opacity-80"
+                  style={isCurrent ? { opacity: 0.4 } : undefined}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Move to ${BOARD_COLUMN_LABELS[col]}`}
+                >
+                  <Text variant="small" className="font-semibold">
+                    {isCurrent
+                      ? `${BOARD_COLUMN_LABELS[col]} (current)`
+                      : `Move to ${BOARD_COLUMN_LABELS[col]}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+            <Pressable
+              onPress={onClose}
+              className="mt-1 rounded-xl border border-border p-3 active:opacity-80"
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+            >
+              <Text variant="small" className="text-center font-semibold">
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }

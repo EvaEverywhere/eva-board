@@ -13,19 +13,23 @@
 //   6. null when the user has zero repos.
 //
 // The hook returns the repos list, the current selection, a setter,
-// loading + error state, and a refetch handle. Persistence is web-only
-// (no-op on native); the URL is the source of truth for share-ability,
-// localStorage is just the convenience fallback.
+// loading + error state, and a refetch handle. Persistence is per
+// platform: web uses localStorage (synchronous), native uses
+// expo-secure-store (asynchronous, loaded once on mount). The URL
+// remains the source of truth for share-ability; storage is just a
+// convenience fallback so the user lands on their last-used repo
+// across app launches.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
+import * as SecureStore from "expo-secure-store";
 
 import { listBoardRepos } from "@/services/board";
 import type { BoardRepo } from "@/services/boardTypes";
 
 const STORAGE_KEY = "eva_board_selected_repo";
 
-function readStoredSelection(): string | null {
+function readStoredSelectionWeb(): string | null {
   if (Platform.OS !== "web") return null;
   try {
     return globalThis.localStorage?.getItem(STORAGE_KEY) ?? null;
@@ -34,17 +38,39 @@ function readStoredSelection(): string | null {
   }
 }
 
-function writeStoredSelection(id: string | null) {
-  if (Platform.OS !== "web") return;
+async function readStoredSelectionNative(): Promise<string | null> {
+  if (Platform.OS === "web") return null;
   try {
-    if (id) {
-      globalThis.localStorage?.setItem(STORAGE_KEY, id);
-    } else {
-      globalThis.localStorage?.removeItem(STORAGE_KEY);
-    }
+    return await SecureStore.getItemAsync(STORAGE_KEY);
   } catch {
-    // best-effort persistence; ignore quota / disabled storage
+    return null;
   }
+}
+
+function writeStoredSelection(id: string | null) {
+  if (Platform.OS === "web") {
+    try {
+      if (id) {
+        globalThis.localStorage?.setItem(STORAGE_KEY, id);
+      } else {
+        globalThis.localStorage?.removeItem(STORAGE_KEY);
+      }
+    } catch {
+      // best-effort persistence; ignore quota / disabled storage
+    }
+    return;
+  }
+  void (async () => {
+    try {
+      if (id) {
+        await SecureStore.setItemAsync(STORAGE_KEY, id);
+      } else {
+        await SecureStore.deleteItemAsync(STORAGE_KEY);
+      }
+    } catch {
+      // best-effort persistence
+    }
+  })();
 }
 
 export type UseBoardReposResult = {
@@ -62,6 +88,24 @@ export function useBoardRepos(initialRepoId?: string): UseBoardReposResult {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initialAppliedRef = useRef(false);
+  // Native SecureStore fetch is async, so we cache the loaded value
+  // (or `null` once the fetch resolves with no value) and treat
+  // `undefined` as "still loading". Web stays synchronous via
+  // readStoredSelectionWeb() in the resolution effect below.
+  const [nativeStored, setNativeStored] = useState<string | null | undefined>(
+    Platform.OS === "web" ? null : undefined,
+  );
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    let cancelled = false;
+    void readStoredSelectionNative().then((value) => {
+      if (!cancelled) setNativeStored(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const refetch = useCallback(async () => {
     setError(null);
@@ -87,7 +131,14 @@ export function useBoardRepos(initialRepoId?: string): UseBoardReposResult {
       setSelectedId(null);
       return;
     }
-    const stored = readStoredSelection();
+    // Wait for native SecureStore to resolve before picking a default,
+    // otherwise we'd race against the user's last-used repo and end up
+    // showing the first/default repo on every cold start.
+    if (Platform.OS !== "web" && nativeStored === undefined) {
+      return;
+    }
+    const stored =
+      Platform.OS === "web" ? readStoredSelectionWeb() : nativeStored ?? null;
     const candidates = [initialRepoId, selectedId, stored];
     for (const id of candidates) {
       if (id && repos.some((r) => r.id === id)) {
@@ -104,7 +155,7 @@ export function useBoardRepos(initialRepoId?: string): UseBoardReposResult {
     // We intentionally exclude `selectedId` from deps to avoid a loop
     // where selecting a repo causes a re-resolve.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repos, initialRepoId]);
+  }, [repos, initialRepoId, nativeStored]);
 
   const selectRepo = useCallback((id: string) => {
     setSelectedId(id);
