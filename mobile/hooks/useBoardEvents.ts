@@ -1,6 +1,16 @@
 // useBoardEvents subscribes to /api/board/events via SSE for the
-// duration of the component's lifetime. Web only — on native, where the
-// EventSource API is not available, the hook is a no-op.
+// duration of the component's lifetime on web.
+//
+// Native (iOS/Android): React Native does not implement the
+// EventSource API, and pulling in a polyfill that holds an HTTP
+// connection open through the JS bridge has historically been flaky on
+// background-tab transitions in Expo Go. Instead, we fall back to a
+// 4-second poll that synthesises a `card_moved` BoardEvent. The
+// board's existing onEvent handler reloads the canonical state from
+// the API on `card_moved`, so consumers get fresh data without having
+// to know which transport is in use. We deliberately do not hit the
+// list endpoint here — that's the consumer's job — to keep this hook
+// transport-only and avoid double-fetching.
 //
 // Auth: the JWT is passed as ?token= query param because the browser
 // EventSource API does not support custom headers. The backend's
@@ -33,6 +43,7 @@ type Options = {
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
+const NATIVE_POLL_INTERVAL_MS = 4_000;
 
 export function useBoardEvents({ enabled = true, onEvent, onError }: Options) {
   const onEventRef = useRef(onEvent);
@@ -51,7 +62,18 @@ export function useBoardEvents({ enabled = true, onEvent, onError }: Options) {
       return;
     }
     if (Platform.OS !== "web") {
-      return;
+      const interval = setInterval(() => {
+        onEventRef.current({
+          id: "native-poll",
+          type: "card_moved",
+          user_id: "",
+          card_id: "",
+          timestamp: new Date().toISOString(),
+        });
+      }, NATIVE_POLL_INTERVAL_MS);
+      return () => {
+        clearInterval(interval);
+      };
     }
     if (typeof EventSource === "undefined") {
       return;
