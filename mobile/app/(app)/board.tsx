@@ -7,14 +7,16 @@ import {
   ScrollView,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ExternalLink, Plus, Sparkles, X } from "lucide-react-native";
 
 import { CurateModal } from "@/components/CurateModal";
+import { RepoSwitcher } from "@/components/RepoSwitcher";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Text } from "@/components/ui/Text";
 import { useBoardEvents } from "@/hooks/useBoardEvents";
+import { useBoardRepos } from "@/hooks/useBoardRepos";
 import { createCard, listCards, moveCard } from "@/services/board";
 import {
   BOARD_COLUMN_LABELS,
@@ -59,6 +61,10 @@ function groupByColumn(cards: BoardCard[]): Record<BoardColumn, BoardCard[]> {
 
 export default function BoardScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ repo?: string }>();
+  const initialRepoId = typeof params.repo === "string" ? params.repo : undefined;
+  const repos = useBoardRepos(initialRepoId);
+  const selectedRepo = repos.selected;
   const [cards, setCards] = useState<BoardCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,8 +72,14 @@ export default function BoardScreen() {
   const [showCurate, setShowCurate] = useState(false);
 
   const refresh = useCallback(async () => {
+    if (!selectedRepo) {
+      // No repo selected — either repos are still loading or user has none.
+      setCards([]);
+      setLoading(repos.isLoading);
+      return;
+    }
     try {
-      const next = await listCards();
+      const next = await listCards({ repoId: selectedRepo.id });
       setCards(next);
       setError(null);
     } catch (err) {
@@ -75,11 +87,20 @@ export default function BoardScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedRepo, repos.isLoading]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Reflect selection changes in the URL so links to the board are
+  // shareable and survive a reload via the ?repo param.
+  useEffect(() => {
+    if (selectedRepo && initialRepoId !== selectedRepo.id) {
+      router.setParams({ repo: selectedRepo.id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRepo?.id]);
 
   useBoardEvents({
     onEvent: (event) => {
@@ -112,10 +133,11 @@ export default function BoardScreen() {
 
   const handleCreateCard = useCallback(
     async (title: string, description: string) => {
-      const created = await createCard({ title, description });
+      if (!selectedRepo) return;
+      const created = await createCard({ title, description }, selectedRepo.id);
       setCards((prev) => [...prev, created]);
     },
-    [],
+    [selectedRepo],
   );
 
   const handleDragEnd = useCallback(
@@ -173,11 +195,33 @@ export default function BoardScreen() {
     );
   }
 
+  // Empty state when the user has no connected repos. Disable card
+  // creation until they add one in Settings → Manage repos.
+  if (!repos.isLoading && repos.repos.length === 0) {
+    return (
+      <View className="flex-1 items-center justify-center bg-background gap-4 p-8">
+        <Text variant="h3">No repos connected</Text>
+        <Text variant="muted" className="text-center max-w-md">
+          Eva Board scopes cards to a GitHub repository. Connect one to get started.
+        </Text>
+        <Button onPress={() => router.push("/repos" as never)} icon={<Plus size={16} color="#06070A" />}>
+          Add a repo
+        </Button>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-background">
       <View className="flex-row items-center justify-between border-b border-border px-5 py-4">
-        <View>
+        <View className="flex-row items-center gap-3">
           <Text variant="h3">Board</Text>
+          <RepoSwitcher
+            repos={repos.repos}
+            selected={selectedRepo}
+            onSelect={repos.selectRepo}
+            isLoading={repos.isLoading}
+          />
           {error ? (
             <Text variant="small" className="text-destructive">
               {error}
@@ -190,6 +234,7 @@ export default function BoardScreen() {
             variant="outline"
             onPress={() => setShowCurate(true)}
             icon={<Sparkles size={16} color="#F8FAFC" />}
+            disabled={!selectedRepo}
           >
             Curate
           </Button>
@@ -197,6 +242,7 @@ export default function BoardScreen() {
             size="sm"
             onPress={() => setShowNewCard(true)}
             icon={<Plus size={16} color="#06070A" />}
+            disabled={!selectedRepo}
           >
             New card
           </Button>

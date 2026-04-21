@@ -8,13 +8,16 @@
 
 import { request } from "@/services/api";
 import type {
+  AddRepoRequest,
   AgentActionStatus,
   BoardCard,
   BoardColumn,
+  BoardRepo,
   BoardSettings,
   CleanupAction,
   CreateCardRequest,
   CurateResult,
+  ListCardsOptions,
   MoveCardRequest,
   Repo,
   TriageProposal,
@@ -29,14 +32,25 @@ export { API_URL as API_BASE_URL } from "@/config";
 
 // ---------- Cards ----------
 
-export async function listCards(column?: BoardColumn): Promise<BoardCard[]> {
-  const query = column ? `?column=${encodeURIComponent(column)}` : "";
+export async function listCards(opts?: ListCardsOptions): Promise<BoardCard[]> {
+  // Backend reads the repo from ?repo_id and the column filter from ?column,
+  // both optional. When repo_id is omitted, the backend falls back to the
+  // user's default repo; absence of repos returns 400 which the caller
+  // surfaces as an empty-state.
+  const params = new URLSearchParams();
+  if (opts?.column) params.set("column", opts.column);
+  if (opts?.repoId) params.set("repo_id", opts.repoId);
+  const query = params.toString() ? `?${params.toString()}` : "";
   const res = await request<{ cards: BoardCard[] }>(`/api/board/cards${query}`);
   return res.cards ?? [];
 }
 
-export async function createCard(req: CreateCardRequest): Promise<BoardCard> {
-  return request<BoardCard>("/api/board/cards", {
+export async function createCard(
+  req: CreateCardRequest,
+  repoId?: string,
+): Promise<BoardCard> {
+  const query = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : "";
+  return request<BoardCard>(`/api/board/cards${query}`, {
     method: "POST",
     body: JSON.stringify(req),
   });
@@ -134,6 +148,33 @@ export async function updateBoardSettings(
 export async function listRepos(): Promise<Repo[]> {
   const res = await request<{ repos: Repo[] }>("/api/board/settings/repos");
   return res.repos ?? [];
+}
+
+// ---------- Connected repos (board_repos) ----------
+
+export async function listBoardRepos(): Promise<BoardRepo[]> {
+  const res = await request<{ repos: BoardRepo[] }>("/api/board/repos");
+  return res.repos ?? [];
+}
+
+export async function addBoardRepo(req: AddRepoRequest): Promise<BoardRepo> {
+  return request<BoardRepo>("/api/board/repos", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function removeBoardRepo(id: string): Promise<void> {
+  await request<void>(`/api/board/repos/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function setDefaultBoardRepo(id: string): Promise<BoardRepo> {
+  return request<BoardRepo>(
+    `/api/board/repos/${encodeURIComponent(id)}/default`,
+    { method: "POST" },
+  );
 }
 
 // ---------- Curate (triage + spring clean) ----------
