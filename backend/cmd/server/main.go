@@ -73,7 +73,6 @@ func main() {
 	}
 	cardsSvc := board.New(core.Pool)
 	settingsSvc := board.NewSettingsService(core.Pool, core.Cipher, ghFactory)
-	settingsHandler := board.NewSettingsHandler(settingsSvc)
 
 	codegenDefaults := codegen.Config{
 		Type:           core.Cfg.CodegenAgent,
@@ -88,10 +87,21 @@ func main() {
 		log.Fatalf("codegen init: %v", err)
 	}
 
+	// One AgentRegistry per process: it caches *board.AgentManager
+	// instances per user so Stop/Feedback from a follow-up HTTP request
+	// reach the same goroutine StartAgent kicked off.
+	agentRegistry := board.NewAgentRegistry(board.NewProductionManagerBuilder(board.AgentBuilderDeps{
+		Cards:           cardsSvc,
+		Settings:        settingsSvc,
+		GitHubClient:    ghFactory,
+		CodegenDefaults: codegenDefaults,
+		SharedCodegen:   codegenAgent,
+	}))
+
+	settingsHandler := board.NewSettingsHandler(settingsSvc, agentRegistry)
 	cardsHandler := board.NewCardsHandler(
-		cardsSvc, settingsSvc, codegenAgent, ghFactory, boardBroker,
+		cardsSvc, settingsSvc, agentRegistry, boardBroker,
 	)
-	cardsHandler.SetCodegenDefaults(codegenDefaults)
 	curateHandler := board.NewCurateHandler(
 		cardsSvc, settingsSvc, codegenAgent, ghFactory,
 	)

@@ -13,11 +13,16 @@ import (
 
 // SettingsHandler exposes per-user board settings over HTTP.
 type SettingsHandler struct {
-	svc *SettingsService
+	svc      *SettingsService
+	registry *AgentRegistry
 }
 
-func NewSettingsHandler(svc *SettingsService) *SettingsHandler {
-	return &SettingsHandler{svc: svc}
+// NewSettingsHandler builds a SettingsHandler. registry may be nil in
+// test binaries that don't construct the agent stack; in production
+// it is required so a settings change can evict the cached
+// AgentManager and force a rebuild on the next agent operation.
+func NewSettingsHandler(svc *SettingsService, registry *AgentRegistry) *SettingsHandler {
+	return &SettingsHandler{svc: svc, registry: registry}
 }
 
 // Register mounts the settings routes onto r. The caller is responsible
@@ -84,6 +89,9 @@ func (h *SettingsHandler) upsert(c *fiber.Ctx) error {
 	})
 	if err != nil {
 		return apperrors.Handle(c, mapSettingsError(err))
+	}
+	if h.registry != nil {
+		h.registry.Forget(userID)
 	}
 	return c.JSON(st)
 }
