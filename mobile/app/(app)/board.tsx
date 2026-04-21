@@ -105,7 +105,7 @@ export default function BoardScreen() {
 
   const openCard = useCallback(
     (id: string) => {
-      router.push(`/board/${id}` as never);
+      router.push(`/board-card/${id}` as never);
     },
     [router],
   );

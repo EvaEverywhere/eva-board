@@ -50,6 +50,15 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   };
 
   if (auth) {
+    // Wait briefly for the AuthSessionProvider to register an access token
+    // provider. On a deep-link/direct-navigate the provider mounts in a
+    // useEffect and may not have registered yet by the time the first
+    // screen issues a fetch.
+    let waited = 0;
+    while (!accessTokenProvider && waited < 1500) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      waited += 50;
+    }
     if (!accessTokenProvider) {
       throw new AuthenticationError(401, "Authentication provider is not configured");
     }
