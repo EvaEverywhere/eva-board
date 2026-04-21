@@ -132,6 +132,21 @@ func TestSettingsServiceDefaults(t *testing.T) {
 	_ = st
 }
 
+func TestSettingsGetDefaultsIncludeEmptyCodegenOverrides(t *testing.T) {
+	st := Settings{
+		CodegenAgent:        DefaultCodegenAgent,
+		CodegenArgs:         []string{},
+		MaxVerifyIterations: DefaultMaxVerifyIterations,
+		MaxReviewCycles:     DefaultMaxReviewCycles,
+	}
+	if st.CodegenCommand != "" {
+		t.Fatalf("expected empty CodegenCommand default, got %q", st.CodegenCommand)
+	}
+	if st.CodegenArgs == nil || len(st.CodegenArgs) != 0 {
+		t.Fatalf("expected non-nil empty CodegenArgs, got %v", st.CodegenArgs)
+	}
+}
+
 func TestSettingsUpsertValidatesIterationBounds(t *testing.T) {
 	svc := NewSettingsService(nil, nil, &fakeFactory{})
 	bad := 0

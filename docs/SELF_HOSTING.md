@@ -122,6 +122,15 @@ stored AES-GCM encrypted in `board_settings.github_token_encrypted` — it is
 | `CODEGEN_COMMAND` | required for `generic` | empty | Binary the generic CLI agent invokes. |
 | `CODEGEN_ARGS` | no | empty | Comma-separated extra args prepended to the generic CLI argv. |
 
+> **Per-user overrides:** `CODEGEN_AGENT`, `CODEGEN_COMMAND`, and
+> `CODEGEN_ARGS` act as **defaults** for users who have not picked an
+> agent in the Settings UI. Once a user selects a preset (Claude Code,
+> Codex, Aider, OpenHands, Cline, or a Custom command) those values are
+> persisted in `board_settings` and override the env defaults for that
+> user. The precedence rule lives in
+> [`backend/internal/board/cards_handler.go`](../backend/internal/board/cards_handler.go)
+> (`resolveCodegenAgent`).
+
 ### Encryption
 
 | Variable | Required | Default | Description |

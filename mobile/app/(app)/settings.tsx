@@ -10,23 +10,110 @@ import { Separator } from "@/components/ui/Separator";
 import { Text } from "@/components/ui/Text";
 import { useBoardSettings } from "@/hooks/useBoardSettings";
 import { listRepos, updateBoardSettings } from "@/services/board";
-import type { Repo } from "@/services/boardTypes";
+import type { BoardSettings, Repo } from "@/services/boardTypes";
 import { useAuthSession } from "@/providers/AuthSessionProvider";
 
 const REPO_PATH_ROOT = "~/eva-board-repos";
 
-const AGENT_OPTIONS: Array<{ value: string; label: string; description: string }> = [
+// AgentPreset describes a one-click coding-agent configuration the user
+// can pick in Settings. `agent` and `command` map directly to the Go
+// codegen.NewAgent switch ("claude-code" uses the Claude Code CLI; any
+// other value uses the generic CLI wrapper with `command` + `args`).
+// `id === "custom"` is the escape hatch that exposes free-form command
+// + args inputs.
+type AgentPreset = {
+  id: string;
+  label: string;
+  description: string;
+  agent: "claude-code" | "generic";
+  command: string | null;
+  args: string[];
+};
+
+const AGENT_PRESETS: AgentPreset[] = [
   {
-    value: "claude_code",
+    id: "claude-code",
     label: "Claude Code",
-    description: "Use the Claude Code CLI for code generation.",
+    description: "Anthropic's Claude Code CLI. Recommended.",
+    agent: "claude-code",
+    command: null,
+    args: [],
   },
   {
-    value: "generic_cli",
-    label: "Generic CLI",
-    description: "Use whatever command is set via CODEGEN_COMMAND on the server.",
+    id: "codex",
+    label: "Codex CLI",
+    description: "OpenAI's Codex CLI.",
+    agent: "generic",
+    command: "codex",
+    args: [],
+  },
+  {
+    id: "aider",
+    label: "Aider",
+    description: "AI pair programming in your terminal.",
+    agent: "generic",
+    command: "aider",
+    args: ["--yes", "--no-stream"],
+  },
+  {
+    id: "openhands",
+    label: "OpenHands",
+    description: "Open-source AI software engineer.",
+    agent: "generic",
+    command: "openhands",
+    args: [],
+  },
+  {
+    id: "cline",
+    label: "Cline",
+    description: "Autonomous coding agent (CLI mode).",
+    agent: "generic",
+    command: "cline",
+    args: [],
+  },
+  {
+    id: "custom",
+    label: "Custom...",
+    description:
+      "Use any CLI command. Reads prompt from stdin and modifies files in the working directory.",
+    agent: "generic",
+    command: "",
+    args: [],
   },
 ];
+
+const CUSTOM_PRESET_ID = "custom";
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// detectPreset matches the saved settings against each preset and falls
+// back to "custom" so editing fields are exposed for any combination
+// the named presets don't cover.
+function detectPreset(settings: {
+  codegen_agent: string;
+  codegen_command: string | null;
+  codegen_args: string[];
+}): string {
+  for (const preset of AGENT_PRESETS) {
+    if (preset.id === CUSTOM_PRESET_ID) continue;
+    const presetCmd = preset.command ?? null;
+    const savedCmd = settings.codegen_command ?? null;
+    if (
+      preset.agent === settings.codegen_agent &&
+      presetCmd === savedCmd &&
+      arraysEqual(preset.args, settings.codegen_args ?? [])
+    ) {
+      return preset.id;
+    }
+  }
+  return CUSTOM_PRESET_ID;
+}
 
 function defaultRepoPath(owner: string, repo: string): string {
   return `${REPO_PATH_ROOT}/${owner}-${repo}`;
@@ -64,9 +151,7 @@ export default function SettingsScreen() {
         />
 
         <AgentCard
-          codegenAgent={settings?.codegen_agent ?? "claude_code"}
-          maxVerifyIterations={settings?.max_verify_iterations ?? 3}
-          maxReviewCycles={settings?.max_review_cycles ?? 5}
+          settings={settings}
           isLoadingSettings={isLoading}
           onChanged={refresh}
         />
@@ -376,41 +461,93 @@ function GitHubCard({
 // ---------- Agent ----------
 
 type AgentCardProps = {
-  codegenAgent: string;
-  maxVerifyIterations: number;
-  maxReviewCycles: number;
+  settings: BoardSettings | null;
   isLoadingSettings: boolean;
   onChanged: () => Promise<void>;
 };
 
-function AgentCard({
-  codegenAgent,
-  maxVerifyIterations,
-  maxReviewCycles,
-  isLoadingSettings,
-  onChanged,
-}: AgentCardProps) {
-  const [agent, setAgent] = useState(codegenAgent);
-  const [verifyIters, setVerifyIters] = useState(maxVerifyIterations);
-  const [reviewCycles, setReviewCycles] = useState(maxReviewCycles);
+function argsToCSV(args: string[]): string {
+  return args.join(", ");
+}
+
+function csvToArgs(csv: string): string[] {
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function AgentCard({ settings, isLoadingSettings, onChanged }: AgentCardProps) {
+  const savedAgent = settings?.codegen_agent ?? "claude-code";
+  const savedCommand = settings?.codegen_command ?? null;
+  const savedArgs = settings?.codegen_args ?? [];
+  const savedVerifyIters = settings?.max_verify_iterations ?? 3;
+  const savedReviewCycles = settings?.max_review_cycles ?? 5;
+
+  const [presetId, setPresetId] = useState<string>(() =>
+    detectPreset({
+      codegen_agent: savedAgent,
+      codegen_command: savedCommand,
+      codegen_args: savedArgs,
+    }),
+  );
+  const [customCommand, setCustomCommand] = useState<string>(savedCommand ?? "");
+  const [customArgsCSV, setCustomArgsCSV] = useState<string>(argsToCSV(savedArgs));
+  const [verifyIters, setVerifyIters] = useState(savedVerifyIters);
+  const [reviewCycles, setReviewCycles] = useState(savedReviewCycles);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
-  useEffect(() => setAgent(codegenAgent), [codegenAgent]);
-  useEffect(() => setVerifyIters(maxVerifyIterations), [maxVerifyIterations]);
-  useEffect(() => setReviewCycles(maxReviewCycles), [maxReviewCycles]);
+  // Re-sync local state whenever the parent reloads settings.
+  useEffect(() => {
+    setPresetId(
+      detectPreset({
+        codegen_agent: savedAgent,
+        codegen_command: savedCommand,
+        codegen_args: savedArgs,
+      }),
+    );
+    setCustomCommand(savedCommand ?? "");
+    setCustomArgsCSV(argsToCSV(savedArgs));
+  }, [savedAgent, savedCommand, savedArgs]);
+  useEffect(() => setVerifyIters(savedVerifyIters), [savedVerifyIters]);
+  useEffect(() => setReviewCycles(savedReviewCycles), [savedReviewCycles]);
+
+  // Resolve what we'd send on save based on the current form state.
+  const resolved = (() => {
+    const preset = AGENT_PRESETS.find((p) => p.id === presetId) ?? AGENT_PRESETS[0];
+    if (preset.id === CUSTOM_PRESET_ID) {
+      return {
+        agent: preset.agent,
+        command: customCommand.trim(),
+        args: csvToArgs(customArgsCSV),
+      };
+    }
+    return {
+      agent: preset.agent,
+      command: preset.command ?? "",
+      args: preset.args,
+    };
+  })();
 
   const dirty =
-    agent !== codegenAgent ||
-    verifyIters !== maxVerifyIterations ||
-    reviewCycles !== maxReviewCycles;
+    resolved.agent !== savedAgent ||
+    resolved.command !== (savedCommand ?? "") ||
+    !arraysEqual(resolved.args, savedArgs) ||
+    verifyIters !== savedVerifyIters ||
+    reviewCycles !== savedReviewCycles;
+
+  const customInvalid =
+    presetId === CUSTOM_PRESET_ID && resolved.command.length === 0;
 
   const handleSave = async () => {
     setSaving(true);
     setSavedMsg(null);
     try {
       await updateBoardSettings({
-        codegen_agent: agent,
+        codegen_agent: resolved.agent,
+        codegen_command: resolved.command === "" ? null : resolved.command,
+        codegen_args: resolved.args,
         max_verify_iterations: verifyIters,
         max_review_cycles: reviewCycles,
       });
@@ -431,35 +568,54 @@ function AgentCard({
       </CardHeader>
       <CardContent className="gap-4">
         <View className="gap-2">
-          <Text variant="small" className="text-muted">Agent type</Text>
+          <Text variant="small" className="text-muted">Coding agent</Text>
           <View className="gap-1">
-            {AGENT_OPTIONS.map((opt) => {
-              const selected = opt.value === agent;
+            {AGENT_PRESETS.map((preset) => {
+              const selected = preset.id === presetId;
               return (
                 <Pressable
-                  key={opt.value}
-                  onPress={() => setAgent(opt.value)}
+                  key={preset.id}
+                  onPress={() => setPresetId(preset.id)}
                   className={
                     "rounded-lg border px-3 py-2 " +
                     (selected ? "border-primary bg-primary/10" : "border-border bg-card")
                   }
                 >
                   <View className="flex-row items-center justify-between">
-                    <Text>{opt.label}</Text>
+                    <Text>{preset.label}</Text>
                     {selected ? <Badge variant="default">Selected</Badge> : null}
                   </View>
                   <Text variant="small" className="text-muted">
-                    {opt.description}
+                    {preset.description}
                   </Text>
                 </Pressable>
               );
             })}
           </View>
-          {agent === "generic_cli" ? (
-            <Text variant="small" className="text-muted">
-              Set the `CODEGEN_COMMAND` environment variable on the server to point at your
-              CLI. (Per-user custom commands aren't wired up yet.)
-            </Text>
+
+          {presetId === CUSTOM_PRESET_ID ? (
+            <View className="gap-2 pt-2">
+              <Input
+                label="Custom command"
+                value={customCommand}
+                onChangeText={setCustomCommand}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="/usr/local/bin/my-agent"
+                error={customInvalid ? "Command is required" : undefined}
+              />
+              <Input
+                label="Args (comma-separated)"
+                value={customArgsCSV}
+                onChangeText={setCustomArgsCSV}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="--yes, --model, gpt-4o"
+              />
+              <Text variant="small" className="text-muted">
+                The command runs in the worktree directory and reads the prompt from stdin.
+              </Text>
+            </View>
           ) : null}
         </View>
 
@@ -489,7 +645,11 @@ function AgentCard({
           ) : (
             <View />
           )}
-          <Button onPress={handleSave} loading={saving} disabled={!dirty || isLoadingSettings}>
+          <Button
+            onPress={handleSave}
+            loading={saving}
+            disabled={!dirty || isLoadingSettings || customInvalid}
+          >
             Save
           </Button>
         </View>

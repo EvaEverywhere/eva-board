@@ -73,6 +73,8 @@ export type BoardSettings = {
   github_repo: string;
   repo_path: string;
   codegen_agent: string;
+  codegen_command: string | null;
+  codegen_args: string[];
   max_verify_iterations: number;
   max_review_cycles: number;
   has_github_token: boolean;
@@ -85,6 +87,8 @@ export type UpsertSettingsRequest = {
   github_repo?: string;
   repo_path?: string;
   codegen_agent?: string;
+  codegen_command?: string | null;
+  codegen_args?: string[];
   max_verify_iterations?: number;
   max_review_cycles?: number;
 };

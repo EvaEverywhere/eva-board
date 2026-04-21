@@ -57,6 +57,17 @@ type CardsHandler struct {
 	ghFactory github.ClientFactory
 	broker    *Broker
 
+	// codegenDefaults captures the server-level CODEGEN_* env values.
+	// Per-user settings (board_settings.codegen_agent / codegen_command
+	// / codegen_args) override these when non-empty; otherwise these
+	// defaults flow into the per-request codegen.Agent built in
+	// buildAgentManager. The Type field also acts as the default when a
+	// user has not picked an agent.
+	codegenDefaults codegen.Config
+	// codegenFactory builds a per-user codegen.Agent from a Config.
+	// Defaults to codegen.NewAgent; tests inject a recorder.
+	codegenFactory func(codegen.Config) (codegen.Agent, error)
+
 	// agentFactory is set by tests via SetAgentFactory to substitute
 	// the real settings-driven AgentManager builder. nil means use the
 	// default buildAgentManager path.
@@ -76,12 +87,28 @@ func NewCardsHandler(
 	broker *Broker,
 ) *CardsHandler {
 	return &CardsHandler{
-		cards:     cards,
-		settings:  settings,
-		code:      code,
-		ghFactory: ghFactory,
-		broker:    broker,
+		cards:          cards,
+		settings:       settings,
+		code:           code,
+		ghFactory:      ghFactory,
+		broker:         broker,
+		codegenFactory: codegen.NewAgent,
 	}
+}
+
+// SetCodegenDefaults installs the server-level CODEGEN_* env values used
+// as fallbacks when a user has not configured per-user overrides.
+func (h *CardsHandler) SetCodegenDefaults(cfg codegen.Config) {
+	h.codegenDefaults = cfg
+}
+
+// SetCodegenFactory replaces the codegen.Agent constructor. Intended for
+// tests; production code leaves this at the default codegen.NewAgent.
+func (h *CardsHandler) SetCodegenFactory(f func(codegen.Config) (codegen.Agent, error)) {
+	if f == nil {
+		f = codegen.NewAgent
+	}
+	h.codegenFactory = f
 }
 
 // Register mounts the card routes onto r. The caller is responsible for
@@ -443,6 +470,10 @@ func (h *CardsHandler) buildAgentManager(ctx context.Context, userID uuid.UUID) 
 	if err != nil {
 		return nil, mapSettingsError(err)
 	}
+	code, err := h.resolveCodegenAgent(st)
+	if err != nil {
+		return nil, apperrors.New(http.StatusBadRequest, "invalid codegen configuration: "+err.Error())
+	}
 	gh := h.ghFactory.NewClient(token)
 	cfg := AgentConfig{
 		RepoOwner:           st.GitHubOwner,
@@ -452,7 +483,53 @@ func (h *CardsHandler) buildAgentManager(ctx context.Context, userID uuid.UUID) 
 		MaxReviewCycles:     st.MaxReviewCycles,
 		GitHubToken:         token,
 	}
-	return NewAgentManager(h.cards, h.code, gh, cfg), nil
+	return NewAgentManager(h.cards, code, gh, cfg), nil
+}
+
+// resolveCodegenAgent layers per-user overrides onto the server defaults
+// and constructs a fresh codegen.Agent. Per-user values win when
+// non-empty; otherwise the server-level CODEGEN_* defaults apply. If
+// neither side has set anything new (i.e. the resolved Config matches
+// the server defaults exactly), the shared h.code instance is reused to
+// avoid spinning up a new agent per request.
+func (h *CardsHandler) resolveCodegenAgent(st Settings) (codegen.Agent, error) {
+	cfg := h.codegenDefaults
+
+	if v := strings.TrimSpace(st.CodegenAgent); v != "" {
+		cfg.Type = v
+	}
+	if v := strings.TrimSpace(st.CodegenCommand); v != "" {
+		cfg.Command = v
+	}
+	if len(st.CodegenArgs) > 0 {
+		cfg.Args = append([]string(nil), st.CodegenArgs...)
+	}
+
+	if codegenConfigEqual(cfg, h.codegenDefaults) && h.code != nil {
+		return h.code, nil
+	}
+	if h.codegenFactory == nil {
+		return codegen.NewAgent(cfg)
+	}
+	return h.codegenFactory(cfg)
+}
+
+func codegenConfigEqual(a, b codegen.Config) bool {
+	if a.Type != b.Type || a.Model != b.Model || a.Command != b.Command {
+		return false
+	}
+	if a.Timeout != b.Timeout || a.MaxOutputBytes != b.MaxOutputBytes {
+		return false
+	}
+	if len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // diff returns the git diff for the card's worktree branch against the

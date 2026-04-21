@@ -34,9 +34,11 @@ type upsertSettingsBody struct {
 	GitHubOwner         *string `json:"github_owner,omitempty"`
 	GitHubRepo          *string `json:"github_repo,omitempty"`
 	RepoPath            *string `json:"repo_path,omitempty"`
-	CodegenAgent        *string `json:"codegen_agent,omitempty"`
-	MaxVerifyIterations *int    `json:"max_verify_iterations,omitempty"`
-	MaxReviewCycles     *int    `json:"max_review_cycles,omitempty"`
+	CodegenAgent        *string   `json:"codegen_agent,omitempty"`
+	CodegenCommand      *string   `json:"codegen_command,omitempty"`
+	CodegenArgs         *[]string `json:"codegen_args,omitempty"`
+	MaxVerifyIterations *int      `json:"max_verify_iterations,omitempty"`
+	MaxReviewCycles     *int      `json:"max_review_cycles,omitempty"`
 }
 
 type repoView struct {
@@ -75,6 +77,8 @@ func (h *SettingsHandler) upsert(c *fiber.Ctx) error {
 		GitHubRepo:          body.GitHubRepo,
 		RepoPath:            body.RepoPath,
 		CodegenAgent:        body.CodegenAgent,
+		CodegenCommand:      body.CodegenCommand,
+		CodegenArgs:         body.CodegenArgs,
 		MaxVerifyIterations: body.MaxVerifyIterations,
 		MaxReviewCycles:     body.MaxReviewCycles,
 	})
