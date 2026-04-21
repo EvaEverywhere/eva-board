@@ -54,6 +54,14 @@ make up
 | LLM | OpenRouter (verification + review) |
 | CI | GitHub Actions |
 
+## Documentation
+
+- [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) — deploy with Docker Compose or a single binary, reverse proxy, backups, agent CLI setup, GitHub webhook setup.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview, the autonomous loop, package map, data model, SSE design, security model.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — development setup and PR conventions.
+- [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
+- [CLAUDE.md](CLAUDE.md) — repository tour for Claude Code and other coding agents.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE)
