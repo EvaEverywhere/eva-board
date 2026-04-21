@@ -20,6 +20,7 @@ import (
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
 	"github.com/EvaEverywhere/eva-board/backend/internal/auth"
+	"github.com/EvaEverywhere/eva-board/backend/internal/board"
 	"github.com/EvaEverywhere/eva-board/backend/internal/bootstrap"
 )
 
@@ -61,8 +62,12 @@ func main() {
 	app.Get("/auth/verify", fiberadapter.VerifyLinkHandler(magicSvc))
 	app.Post("/auth/login", devLoginHandler(magicSvc, authSvc))
 
+	boardBroker := board.NewBroker()
+	boardEventsHandler := board.NewEventsHandler(boardBroker)
+
 	api := app.Group("/api", authMW.RequireAuth())
 	api.Get("/me", authHandler.GetMe)
+	api.Get("/board/events", boardEventsHandler.Stream)
 
 	errCh := make(chan error, 1)
 	go func() {
