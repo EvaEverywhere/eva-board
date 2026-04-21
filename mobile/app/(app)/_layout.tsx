@@ -13,9 +13,9 @@ export default function AppLayout() {
 
   // Layout shape differs per platform:
   //   - Web: the custom FloatingTabBar paints itself as a fixed 240px
-  //     sidebar on the right (CSS position: fixed). We hide the default
-  //     tab-bar layout and push the scene content left via sceneStyle
-  //     marginRight so screens flow into the remaining viewport.
+  //     sidebar on the left (CSS position: fixed). We hide the default
+  //     tab-bar layout and push the scene content right via sceneStyle
+  //     marginLeft so screens flow into the remaining viewport.
   //   - Native: the custom FloatingTabBar is an absolutely positioned
   //     floating bottom bar overlaid on content. Hiding the default tab
   //     bar layout stops bottom-tabs from reserving space for it.
@@ -23,7 +23,7 @@ export default function AppLayout() {
     web: {
       headerShown: false,
       tabBarStyle: { display: "none" as const },
-      sceneStyle: { marginRight: 240 }
+      sceneStyle: { marginLeft: 240 }
     },
     default: {
       headerShown: false,

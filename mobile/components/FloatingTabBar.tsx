@@ -22,11 +22,11 @@ const labelMap: Record<string, string> = {
  *   - On native (iOS, Android) it is a floating bottom bar, absolutely
  *     positioned over the content, matching the feel of a native mobile
  *     app.
- *   - On web it is a right sidebar (vertical list) — the Tabs layout
- *     machinery reserves 240px on the right for this component so content
- *     flows into the remaining viewport with no overlap. A bottom bar on
- *     a wide browser window feels wrong; a sidebar reads like a proper
- *     desktop app.
+ *   - On web it is a left sidebar (vertical list) — the layout in
+ *     (app)/_layout.tsx pushes scene content right by 240px via
+ *     sceneStyle.marginLeft so nothing renders underneath the sidebar.
+ *     A bottom bar on a wide browser window feels wrong; a sidebar
+ *     reads like a proper desktop app.
  *
  * Both branches share the route-to-icon/label maps so adding a new tab
  * is a one-line change here.
@@ -95,16 +95,16 @@ function NativeBottomBar({ state, descriptors, navigation }: BottomTabBarProps) 
 // ---------- Web ------------------------------------------------------------
 
 function WebSidebar({ state, descriptors, navigation }: BottomTabBarProps) {
-  // `position: "fixed"` pins the sidebar to the right of the viewport so
+  // `position: "fixed"` pins the sidebar to the left of the viewport so
   // it stays visible while the main content scrolls independently. The
-  // layout in (app)/_layout.tsx pushes the scene 240px to the left via
-  // sceneStyle.marginRight so nothing renders underneath.
+  // layout in (app)/_layout.tsx pushes the scene 240px to the right via
+  // sceneStyle.marginLeft so nothing renders underneath.
   return (
     <View
-      className="border-l border-border bg-card/80 px-3 py-5"
+      className="border-r border-border bg-card/80 px-3 py-5"
       // `position: "fixed"` is web-only; RN types reject it. Cast keeps
       // the native typecheck happy while react-native-web forwards it.
-      style={{ position: "fixed" as unknown as "absolute", top: 0, right: 0, bottom: 0, width: 240 }}
+      style={{ position: "fixed" as unknown as "absolute", top: 0, left: 0, bottom: 0, width: 240 }}
     >
       <View className="mb-6 px-2">
         <Text variant="large" className="font-semibold">
