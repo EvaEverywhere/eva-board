@@ -14,6 +14,10 @@ type Config struct {
 	ResendAPIKey       string
 	AuthEmailFrom      string
 	MobileAppScheme    string
+
+	LLMAPIKey  string
+	LLMModel   string
+	LLMBaseURL string
 }
 
 func Load() Config {
@@ -26,6 +30,10 @@ func Load() Config {
 		ResendAPIKey:       strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
 		AuthEmailFrom:      getEnv("AUTH_EMAIL_FROM", "Eva Board <onboarding@example.com>"),
 		MobileAppScheme:    getEnv("MOBILE_APP_SCHEME", "eva-board"),
+
+		LLMAPIKey:  strings.TrimSpace(os.Getenv("LLM_API_KEY")),
+		LLMModel:   getEnv("LLM_MODEL", "openai/gpt-4o-mini"),
+		LLMBaseURL: getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 	}
 }
 
