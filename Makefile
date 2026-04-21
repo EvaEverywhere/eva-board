@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help setup doctor up down restart logs dev dev-db build test lint fmt migrate db-shell db-reset mobile mobile-web mobile-install seed token clean
+.PHONY: help setup doctor up down restart logs dev dev-db build test lint fmt migrate db-shell db-reset mobile mobile-web mobile-install seed token clean phone-build-ios phone-build-android phone-dev phone-tunnel
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -139,3 +139,15 @@ token: seed ## Alias for seed token command
 clean: ## Remove generated artifacts
 	$(COMPOSE) down -v
 	rm -rf backend/bin mobile/node_modules mobile/.expo
+
+phone-build-ios: ## Build iOS dev client via EAS (cloud build, ~15min)
+	cd mobile && npx eas build --profile development --platform ios
+
+phone-build-android: ## Build Android dev client via EAS
+	cd mobile && npx eas build --profile development --platform android
+
+phone-dev: ## Start Metro on LAN for installed dev client to connect
+	cd mobile && npx expo start --dev-client --host lan
+
+phone-tunnel: ## Expose local API via ngrok so the phone can reach it
+	ngrok http 8090

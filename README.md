@@ -57,6 +57,10 @@ make up
 | LLM | OpenRouter (verification + review) |
 | CI | GitHub Actions |
 
+## Mobile (iOS / Android)
+
+Eva Board ships as a React Native app. To install on your phone and develop with hot-reload from your Mac, see [docs/PHONE_DEV_SETUP.md](docs/PHONE_DEV_SETUP.md).
+
 ## Documentation
 
 - [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) — deploy with Docker Compose or a single binary, reverse proxy, backups, agent CLI setup, GitHub webhook setup.
