@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -82,6 +83,7 @@ func (h *CardsHandler) Register(r fiber.Router) {
 	g.Post("/:id/agent/start", h.agentStart)
 	g.Post("/:id/agent/stop", h.agentStop)
 	g.Post("/:id/agent/feedback", h.agentFeedback)
+	g.Get("/:id/diff", h.diff)
 }
 
 // cardView is the JSON shape returned to the client. We don't add JSON
@@ -422,6 +424,59 @@ func (h *CardsHandler) buildAgentManager(ctx context.Context, userID uuid.UUID) 
 		GitHubToken:          token,
 	}
 	return NewAgentManager(h.cards, h.code, gh, h.llm, cfg), nil
+}
+
+// diff returns the git diff for the card's worktree branch against the
+// repository's main branch. The diff is computed with
+// `git -C <repoPath> diff main...<branch>`, which shows the changes on
+// the branch since it diverged from main. Returns an empty string if no
+// branch has been created yet (e.g. agent has not run).
+func (h *CardsHandler) diff(c *fiber.Ctx) error {
+	userID, err := currentUserUUID(c)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	cardID, err := parseCardID(c)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	card, err := h.cards.Get(c.UserContext(), userID, cardID)
+	if err != nil {
+		return apperrors.Handle(c, mapCardError(err))
+	}
+	if card.WorktreeBranch == nil || strings.TrimSpace(*card.WorktreeBranch) == "" {
+		return c.JSON(fiber.Map{"diff": "", "branch": nil, "base": "main"})
+	}
+	if h.settings == nil {
+		return apperrors.Handle(c, apperrors.New(http.StatusServiceUnavailable, "board settings not configured"))
+	}
+	st, err := h.settings.Get(c.UserContext(), userID)
+	if err != nil {
+		return apperrors.Handle(c, err)
+	}
+	if strings.TrimSpace(st.RepoPath) == "" {
+		return apperrors.Handle(c, apperrors.New(http.StatusBadRequest, "board settings incomplete: repo_path is required"))
+	}
+
+	branch := *card.WorktreeBranch
+	base := "main"
+	ctx, cancel := context.WithTimeout(c.UserContext(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", st.RepoPath, "diff", base+"..."+branch)
+	out, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		return c.JSON(fiber.Map{
+			"diff":   "",
+			"branch": branch,
+			"base":   base,
+			"error":  strings.TrimSpace(string(out)),
+		})
+	}
+	return c.JSON(fiber.Map{
+		"diff":   string(out),
+		"branch": branch,
+		"base":   base,
+	})
 }
 
 func parseCardID(c *fiber.Ctx) (uuid.UUID, error) {
