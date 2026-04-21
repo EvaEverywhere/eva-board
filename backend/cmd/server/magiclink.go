@@ -12,15 +12,15 @@ import (
 	magiclink "github.com/teslashibe/magiclink-auth-go"
 	"github.com/teslashibe/magiclink-auth-go/resend"
 
-	"github.com/teslashibe/template-app/backend/internal/auth"
-	"github.com/teslashibe/template-app/backend/internal/config"
+	"github.com/EvaEverywhere/eva-board/backend/internal/auth"
+	"github.com/EvaEverywhere/eva-board/backend/internal/config"
 )
 
 func newMagicLinkService(cfg config.Config, pool *pgxpool.Pool, authSvc *auth.Service) (*magiclink.Service, error) {
 	magicCfg := magiclink.Config{
 		JWTSecret:   cfg.JWTSecret,
 		AppURL:      cfg.AppURL,
-		AppName:     "Template App",
+		AppName:     "Eva Board",
 		FromAddress: cfg.AuthEmailFrom,
 		CodeTTL:     10 * time.Minute,
 		TokenTTL:    30 * 24 * time.Hour,

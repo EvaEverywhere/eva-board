@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/teslashibe/template-app/backend/internal/apperrors"
+	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
 )
 
 type Service struct {
