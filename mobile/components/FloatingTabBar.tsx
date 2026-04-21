@@ -101,7 +101,7 @@ function WebSidebar({ state, descriptors, navigation }: BottomTabBarProps) {
   // sceneStyle.marginLeft so nothing renders underneath.
   return (
     <View
-      className="border-r border-border bg-card/80 px-3 py-5"
+      className="border-r border-border bg-background px-3 py-5"
       // `position: "fixed"` is web-only; RN types reject it. Cast keeps
       // the native typecheck happy while react-native-web forwards it.
       style={{ position: "fixed" as unknown as "absolute", top: 0, left: 0, bottom: 0, width: 240 }}
