@@ -1,9 +1,59 @@
-# ⚠️ Deprecated
+# Eva Board
 
-This repo has been superseded by **[teslashibe/agent-setup](https://github.com/teslashibe/agent-setup)**.
+Autonomous dev board — builds, verifies, reviews, and ships code without you in the loop.
 
-`agent-setup` contains everything that was here — magic-link auth, Expo mobile + web, Go backend, Goose migrations, TimescaleDB — plus a full Claude agent layer (tool-use loop, streaming SSE chat, persistent sessions).
+## How it works
 
-**Use `agent-setup` for all new projects.**
+Tools like Vibe Kanban make humans faster at reviewing agent work. Eva Board removes humans from the loop entirely. The agent verifies against acceptance criteria, self-reviews its own diff, retries on failure, and creates the PR.
 
-This repository is archived and will not receive further updates.
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│   Create card ──► Develop ──► Verify ──► Review ──► PR  │
+│       ▲                         │          │            │
+│       │                         ▼          ▼            │
+│       │                     ┌──────────────────┐        │
+│       │                     │  Failed? Retry   │        │
+│       │                     │  with feedback    │        │
+│       │                     └──────────────────┘        │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+1. Create a card with acceptance criteria
+2. Move to "Develop" — agent starts automatically
+3. Agent codes, commits, pushes
+4. Eva Board verifies against your acceptance criteria
+5. Eva Board reviews the diff for quality
+6. Failed? Agent retries with feedback (automatic)
+7. Passed? PR created on GitHub automatically
+
+Plus autonomous backlog maintenance: triage analyzes your repo and proposes new issues; spring clean finds orphan branches and stale worktrees.
+
+## Quickstart
+
+**Prerequisites:** Go 1.23+, Node 20+, Docker, a coding agent CLI (Claude Code, etc.)
+
+```bash
+git clone https://github.com/EvaEverywhere/eva-board.git
+cd eva-board
+cp .env.example .env
+# Fill in LLM_API_KEY and TOKEN_ENCRYPTION_KEY
+make up
+# Open http://localhost:8081
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Backend | Go 1.23, Fiber, pgx, PostgreSQL 16 |
+| Frontend | Expo (web), React, NativeWind |
+| Auth | Email magic-link (passwordless) |
+| Agents | Pluggable: Claude Code, any CLI agent |
+| LLM | OpenRouter (verification + review) |
+| CI | GitHub Actions |
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE)
