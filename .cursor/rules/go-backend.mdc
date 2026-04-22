@@ -11,8 +11,8 @@
 
 ## Eva Board specifics
 
-- Domain packages live under `backend/internal/`: `board`, `board/agent`, `board/triage`, `codegen`, `github`, `llm`
-- Coding agent CLIs are wrapped behind the `codegen.Agent` interface — never call `claude` directly outside `internal/codegen/`
+- Domain packages live under `backend/internal/`: `board`, `board/agent`, `board/triage`, `github`, `llm`
+- Coding agent CLIs are wrapped behind the `codegen.Agent` interface from the external `github.com/teslashibe/codegen-go` module — never call `claude` directly; if the wrapper needs new behaviour, send the change upstream to `codegen-go`
 - The autonomous loop (verify, review, retry, auto-PR) lives in `internal/board/agent.go` — keep retry caps configurable
 - Real-time updates use SSE (`internal/board/events.go`), not WebSocket
 - GitHub API access goes through `internal/github/` — never call the GitHub API from other packages

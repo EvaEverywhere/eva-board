@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 )
 
 // ReviewVerdict is the reviewer's high-level disposition of the change.

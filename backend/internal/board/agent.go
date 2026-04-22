@@ -21,7 +21,7 @@ import (
 	"os/exec"
 	"sync"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 	"github.com/google/uuid"
 )

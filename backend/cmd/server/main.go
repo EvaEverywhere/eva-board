@@ -22,7 +22,7 @@ import (
 	"github.com/EvaEverywhere/eva-board/backend/internal/auth"
 	"github.com/EvaEverywhere/eva-board/backend/internal/board"
 	"github.com/EvaEverywhere/eva-board/backend/internal/bootstrap"
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 	githubclient "github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 

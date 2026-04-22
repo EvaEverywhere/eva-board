@@ -20,8 +20,8 @@ type Config struct {
 	GitHubWebhookSecret string
 	TokenEncryptionKey  string
 
-	// Codegen agent configuration. See backend/internal/codegen for the
-	// pluggable agent interface that consumes these.
+	// Codegen agent configuration. See github.com/teslashibe/codegen-go for
+	// the pluggable agent interface that consumes these.
 	CodegenAgent          string
 	CodegenModel          string
 	CodegenTimeout        time.Duration

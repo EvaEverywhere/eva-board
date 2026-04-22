@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 	"github.com/google/uuid"
 )
 
