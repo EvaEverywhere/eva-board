@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/EvaEverywhere/eva-board/backend/internal/apperrors"
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 )
 

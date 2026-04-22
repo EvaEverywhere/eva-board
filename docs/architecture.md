@@ -62,8 +62,9 @@ Each `StartAgent` spawns a goroutine that performs the following steps:
 
 2. **Initial coding-agent invocation.** `invokeCodingAgent` builds a prompt
    from the card (title, description, acceptance criteria, plus any queued
-   feedback) and hands it to the configured `codegen.Agent`
-   ([`backend/internal/codegen/agent.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/codegen/agent.go)).
+   feedback) and hands it to the configured `codegen.Agent` (from the
+   standalone [`teslashibe/codegen-go`](https://github.com/teslashibe/codegen-go)
+   module — see [`agent.go`](https://github.com/teslashibe/codegen-go/blob/main/agent.go)).
    The CLI is forked with the worktree as its working directory and the
    prompt on stdin. Combined output is captured (default cap: 10 MiB).
 

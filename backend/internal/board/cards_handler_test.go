@@ -14,7 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 	"github.com/EvaEverywhere/eva-board/backend/internal/github"
 	"github.com/EvaEverywhere/eva-board/backend/internal/httputil"
 )

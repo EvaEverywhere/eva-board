@@ -31,9 +31,10 @@ hasn't selected one.
 | **Cline** | `generic` | Wrap the Cline CLI shim; pair with `CODEGEN_COMMAND=cline`. |
 | **Custom** | `generic` | Any CLI that reads a prompt from stdin and edits files in its working directory. |
 
-The wrapper for the generic path lives in
-`backend/internal/codegen/generic.go`. The wrapper for Claude Code lives
-in `backend/internal/codegen/claude_code.go`.
+The wrappers live in the standalone
+[`teslashibe/codegen-go`](https://github.com/teslashibe/codegen-go) module —
+see [`generic.go`](https://github.com/teslashibe/codegen-go/blob/main/generic.go)
+and [`claude.go`](https://github.com/teslashibe/codegen-go/blob/main/claude.go).
 
 ---
 

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/EvaEverywhere/eva-board/backend/internal/codegen"
+	"github.com/teslashibe/codegen-go"
 )
 
 // CriterionResult is the verdict for a single acceptance criterion.

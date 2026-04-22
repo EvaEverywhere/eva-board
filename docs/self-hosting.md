@@ -327,8 +327,9 @@ means setting `Environment=PATH=...` (see Section 4) or symlinking into
 ### Generic CLI
 
 Any CLI that reads a prompt from stdin and makes file edits in its working
-directory works. The wrapper lives at
-[`backend/internal/codegen/generic.go`](https://github.com/EvaEverywhere/eva-board/blob/main/backend/internal/codegen/generic.go).
+directory works. The wrapper lives in
+[`teslashibe/codegen-go`](https://github.com/teslashibe/codegen-go) — see
+[`generic.go`](https://github.com/teslashibe/codegen-go/blob/main/generic.go).
 
 ```bash
 CODEGEN_AGENT=generic
